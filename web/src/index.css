@@ -1,0 +1,164 @@
+:root {
+  color-scheme: dark;
+  font-family: "SF Pro Text", "Helvetica Neue", sans-serif;
+  --bg: #1e1e1e;
+  --sidebar: #252526;
+  --border: #3c3c3c;
+  --text: #cccccc;
+  --muted: #8a8a8a;
+  --accent: #89d185;
+  --danger: #f14c4c;
+  --active: #2a2d2e;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.app {
+  display: flex;
+  height: 100%;
+  overflow: hidden;
+}
+
+.sidebar {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: var(--sidebar);
+  border-right: 1px solid var(--border);
+  min-width: 160px;
+  max-width: 480px;
+  flex-shrink: 0;
+}
+
+.sidebar-tabs {
+  flex: 1;
+  overflow: auto;
+  padding: 8px 6px;
+}
+
+.sidebar-resizer {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+}
+
+.tab {
+  padding: 8px 10px;
+  border-radius: 6px;
+  margin-bottom: 4px;
+  cursor: grab;
+  user-select: none;
+}
+
+.tab:hover {
+  background: #2c2c2c;
+}
+
+.tab.active {
+  background: var(--active);
+}
+
+.tab-cwd {
+  font-weight: 700;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tab-cmd {
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+  margin-top: 2px;
+}
+
+.tab-state {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.tab-state.running {
+  color: var(--accent);
+}
+
+.tab-state.err,
+.tab-state.exited.err {
+  color: var(--danger);
+}
+
+.unread {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  display: inline-block;
+}
+
+.no-int {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.new-tab {
+  margin: 8px;
+  padding: 10px;
+  border: 1px dashed var(--border);
+  background: transparent;
+  color: var(--text);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.new-tab:hover {
+  border-color: var(--accent);
+}
+
+.main {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+}
+
+.terminal-host {
+  height: 100%;
+  padding: 4px;
+}
+
+.terminal-host .xterm {
+  height: 100%;
+}
+
+.empty {
+  height: 100%;
+  display: grid;
+  place-content: center;
+  gap: 16px;
+  text-align: center;
+}
+
+.empty button {
+  padding: 12px 18px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--sidebar);
+  color: var(--text);
+  cursor: pointer;
+}

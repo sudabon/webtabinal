@@ -1,0 +1,117 @@
+package server
+
+import (
+	"encoding/json"
+	"log"
+	"net"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"github.com/sudabon/webtabinal/internal/config"
+	"github.com/sudabon/webtabinal/internal/paths"
+)
+
+const cookieName = "webtabinal_token"
+
+type Server struct {
+	cfg    *config.Store
+	logger *log.Logger
+	mux    *http.ServeMux
+	hub    *Hub
+}
+
+func New(cfg *config.Store, logger *log.Logger, hub *Hub, static http.Handler) *Server {
+	s := &Server{cfg: cfg, logger: logger, mux: http.NewServeMux(), hub: hub}
+	s.routes(static)
+	return s
+}
+
+func (s *Server) Handler() http.Handler {
+	return s.withSecurity(s.mux)
+}
+
+func (s *Server) ListenAndServe() error {
+	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(s.cfg.Get().Port))
+	s.logger.Printf("listening on http://%s", addr)
+	return http.ListenAndServe(addr, s.Handler())
+}
+
+func (s *Server) withSecurity(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		port := strconv.Itoa(s.cfg.Get().Port)
+		hostOK := r.Host == "127.0.0.1:"+port || r.Host == "localhost:"+port
+		if !hostOK {
+			http.Error(w, "forbidden host", http.StatusForbidden)
+			return
+		}
+		if origin := r.Header.Get("Origin"); origin != "" {
+			ok := origin == "http://127.0.0.1:"+port || origin == "http://localhost:"+port
+			if !ok {
+				http.Error(w, "forbidden origin", http.StatusForbidden)
+				return
+			}
+		}
+
+		if r.Method == http.MethodGet && !strings.HasPrefix(r.URL.Path, "/api") {
+			s.setAuthCookie(w)
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		if strings.HasPrefix(r.URL.Path, "/api") {
+			if !s.validToken(r) {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) setAuthCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     cookieName,
+		Value:    s.cfg.AuthToken(),
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+	})
+}
+
+func (s *Server) validToken(r *http.Request) bool {
+	if c, err := r.Cookie(cookieName); err == nil && c.Value == s.cfg.AuthToken() {
+		return true
+	}
+	auth := r.Header.Get("Authorization")
+	if strings.HasPrefix(auth, "Bearer ") {
+		return strings.TrimPrefix(auth, "Bearer ") == s.cfg.AuthToken()
+	}
+	return false
+}
+
+func (s *Server) routes(static http.Handler) {
+	s.mux.HandleFunc("GET /api/sessions", s.handleListSessions)
+	s.mux.HandleFunc("POST /api/sessions", s.handleCreateSession)
+	s.mux.HandleFunc("POST /api/sessions/{id}/duplicate", s.handleDuplicateSession)
+	s.mux.HandleFunc("POST /api/sessions/{id}/restart", s.handleRestartSession)
+	s.mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDeleteSession)
+	s.mux.HandleFunc("PUT /api/sessions/order", s.handleReorderSessions)
+	s.mux.HandleFunc("GET /api/config", s.handleGetConfig)
+	s.mux.HandleFunc("PATCH /api/config", s.handlePatchConfig)
+	s.mux.HandleFunc("GET /api/ws", s.hub.HandleWS)
+	if static != nil {
+		s.mux.Handle("/", static)
+	} else {
+		s.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/plain")
+			_, _ = w.Write([]byte(paths.AppName + " daemon is running.\n"))
+		})
+	}
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
