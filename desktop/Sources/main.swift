@@ -7,15 +7,37 @@ private let defaultPort = 8642
 private let startupTimeout: TimeInterval = 15
 private let probeInterval: TimeInterval = 0.15
 
-final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavigationDelegate, NSWindowDelegate {
+private enum ConfigPortError: Error {
+    case readFailed(path: String, underlying: Error)
+    case parseFailed(path: String)
+    case invalidPort(path: String)
+}
+
+final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavigationDelegate, WKUIDelegate, NSWindowDelegate {
     private var window: NSWindow!
     private var webView: WKWebView!
     private var port = defaultPort
     private var logPath: String = ""
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        port = readConfiguredPort()
         logPath = daemonLogPath()
+        do {
+            port = try readConfiguredPort()
+        } catch let error as ConfigPortError {
+            switch error {
+            case .readFailed(let path, let underlying):
+                showStartupError("Failed to read config at \(path): \(underlying.localizedDescription)")
+            case .parseFailed(let path):
+                showStartupError("Failed to parse config at \(path). Check that config.json is valid JSON.")
+            case .invalidPort(let path):
+                showStartupError("Invalid port in config at \(path). port must be an integer between 1 and 65535.")
+            }
+            return
+        } catch {
+            showStartupError("Failed to read config: \(error.localizedDescription)")
+            return
+        }
+
         buildWindow()
 
         if !isListening(port: port) {
@@ -70,20 +92,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
         webView = WKWebView(frame: rect, configuration: config)
         webView.navigationDelegate = self
+        webView.uiDelegate = self
         window.contentView = webView
+    }
+
+    private func showWindow() {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
     private func waitForDaemonThenLoad() {
         let deadline = Date().addingTimeInterval(startupTimeout)
-        Timer.scheduledTimer(withTimeInterval: probeInterval, repeats: true) { [weak self] timer in
+        let timer = Timer(timeInterval: probeInterval, repeats: true) { [weak self] timer in
             guard let self else {
                 timer.invalidate()
                 return
             }
             if self.isListening(port: self.port) {
                 timer.invalidate()
+                self.showWindow()
                 let url = URL(string: "http://127.0.0.1:\(self.port)/")!
                 self.webView.load(URLRequest(url: url))
                 return
@@ -91,10 +118,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             if Date() >= deadline {
                 timer.invalidate()
                 self.showStartupError(
-                    "Timed out waiting for the WebTabinal daemon on port \(self.port).\n\nCheck the log:\n\(self.logPath)"
+                    "Timed out waiting for the WebTabinal daemon on port \(self.port).\n\n\(self.logHint())"
                 )
             }
         }
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     private func showStartupError(_ message: String) {
@@ -107,18 +135,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         NSApp.terminate(nil)
     }
 
+    private func showLoadError(failedURL: String, error: Error) {
+        showStartupError(
+            "Failed to load \(failedURL):\n\(error.localizedDescription)\n\n\(logHint())"
+        )
+    }
+
+    private func logHint() -> String {
+        "Check the logs:\n\(daemonLogPath())\n\(stdioLogPath())"
+    }
+
     // MARK: - Daemon lifecycle
 
-    private func readConfiguredPort() -> Int {
+    private func readConfiguredPort() throws -> Int {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let configURL = home
             .appendingPathComponent("Library/Application Support/WebTabinal/config.json")
-        guard let data = try? Data(contentsOf: configURL),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let value = json["port"] as? Int,
-              value > 0, value <= 65535
-        else {
+        guard FileManager.default.fileExists(atPath: configURL.path) else {
             return defaultPort
+        }
+        let data: Data
+        do {
+            data = try Data(contentsOf: configURL)
+        } catch {
+            throw ConfigPortError.readFailed(path: configURL.path, underlying: error)
+        }
+        let json: [String: Any]
+        do {
+            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                throw ConfigPortError.parseFailed(path: configURL.path)
+            }
+            json = object
+        } catch let error as ConfigPortError {
+            throw error
+        } catch {
+            throw ConfigPortError.parseFailed(path: configURL.path)
+        }
+        guard let value = json["port"] as? Int, value > 0, value <= 65535 else {
+            throw ConfigPortError.invalidPort(path: configURL.path)
         }
         return value
     }
@@ -182,13 +236,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             throw NSError(
                 domain: "WebTabinal",
                 code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "Bundled webtabinal binary not found at \(binary)"]
+                userInfo: [NSLocalizedDescriptionKey: "Bundled webtabinal binary not found at \(binary)\n\n\(logHint())"]
             )
         }
         let log = stdioLogPath()
         // python3 start_new_session=True calls setsid(); the daemon outlives the .app.
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
         let script = """
         import subprocess
         log = open(\(pythonStringLiteral(log)), "a")
@@ -205,10 +263,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         try process.run()
         process.waitUntilExit()
         if process.terminationStatus != 0 {
+            let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+            let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+            var detail = String(data: stderrData, encoding: .utf8) ?? ""
+            if detail.isEmpty {
+                detail = String(data: stdoutData, encoding: .utf8) ?? ""
+            }
+            detail = detail.trimmingCharacters(in: .whitespacesAndNewlines)
+            var message = "Failed to spawn daemon (exit \(process.terminationStatus))"
+            if !detail.isEmpty {
+                message += ":\n\(detail)"
+            }
+            message += "\n\n\(logHint())"
             throw NSError(
                 domain: "WebTabinal",
                 code: Int(process.terminationStatus),
-                userInfo: [NSLocalizedDescriptionKey: "Failed to spawn daemon (exit \(process.terminationStatus))"]
+                userInfo: [NSLocalizedDescriptionKey: message]
             )
         }
     }
@@ -218,6 +288,88 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
             + "\""
+    }
+
+    // MARK: - WKNavigationDelegate
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        let failedURL = webView.url?.absoluteString ?? "http://127.0.0.1:\(port)/"
+        showLoadError(failedURL: failedURL, error: error)
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        let failedURL = webView.url?.absoluteString ?? "http://127.0.0.1:\(port)/"
+        showLoadError(failedURL: failedURL, error: error)
+    }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        showStartupError("Web content process terminated unexpectedly.\n\n\(logHint())")
+    }
+
+    // MARK: - WKUIDelegate
+
+    func webView(
+        _ webView: WKWebView,
+        runJavaScriptAlertPanelWithMessage message: String,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping () -> Void
+    ) {
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.addButton(withTitle: "OK")
+        alert.beginSheetModal(for: window) { _ in
+            completionHandler()
+        }
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        runJavaScriptConfirmPanelWithMessage message: String,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping (Bool) -> Void
+    ) {
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { response in
+            completionHandler(response == .alertFirstButtonReturn)
+        }
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        runJavaScriptTextInputPanelWithPrompt prompt: String,
+        defaultText: String?,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping (String?) -> Void
+    ) {
+        let alert = NSAlert()
+        alert.messageText = prompt
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+        input.stringValue = defaultText ?? ""
+        alert.accessoryView = input
+        alert.beginSheetModal(for: window) { response in
+            if response == .alertFirstButtonReturn {
+                completionHandler(input.stringValue)
+            } else {
+                completionHandler(nil)
+            }
+        }
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        createWebViewWith configuration: WKWebViewConfiguration,
+        for navigationAction: WKNavigationAction,
+        windowFeatures: WKWindowFeatures
+    ) -> WKWebView? {
+        if let url = navigationAction.request.url {
+            NSWorkspace.shared.open(url)
+        }
+        return nil
     }
 
     // MARK: - WKScriptMessageHandler

@@ -39,7 +39,9 @@ export function TerminalView({ sessionId, socket, config, copyOnSelect, theme }:
     });
     const fit = new FitAddon();
     const search = new SearchAddon();
-    const links = new WebLinksAddon();
+    const links = new WebLinksAddon((_event, uri) => {
+      window.open(uri, '_blank');
+    });
     term.loadAddon(fit);
     term.loadAddon(search);
     term.loadAddon(links);

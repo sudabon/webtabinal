@@ -12,6 +12,8 @@ make desktop
 open bin/WebTabinal.app
 ```
 
+継続利用する場合は `/Applications` など固定の場所へコピーしてください。`bin/` 配下の `.app` は `make clean` や再ビルド（`make desktop`）で削除されます。
+
 ウィンドウを閉じてもデーモンとセッションは残ります。再オープンすると既存デーモンに再接続します。
 
 ## CLI で起動する場合
@@ -20,7 +22,7 @@ open bin/WebTabinal.app
 # フロントエンドとデーモンをビルド
 make build
 
-# フォアグラウンドで起動
+# フォアグラウンドで起動（既にデーモンが listen 中ならその旨を表示して終了）
 ./bin/webtabinal serve
 
 # UI を開く（ブラウザ）

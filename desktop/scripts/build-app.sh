@@ -36,7 +36,12 @@ swift "${DESKTOP}/scripts/generate-icon.swift" \
 
 # Ad-hoc sign so Gatekeeper is less noisy for personal local builds.
 if command -v codesign >/dev/null 2>&1; then
-  codesign --force --deep --sign - "${APP_DIR}" >/dev/null 2>&1 || true
+  if ! codesign --force --sign - "${MACOS}/webtabinal-daemon" 2>&1; then
+    echo "warning: codesign failed for the bundled daemon" >&2
+  fi
+  if ! codesign --force --sign - "${APP_DIR}" 2>&1; then
+    echo "warning: codesign failed for ${APP_DIR}; Gatekeeper may refuse to open it" >&2
+  fi
 fi
 
 echo "built ${APP_DIR}"

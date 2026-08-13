@@ -18,6 +18,8 @@ import (
 
 const cookieName = "webtabinal_token"
 
+var ErrAlreadyRunning = errors.New("webtabinal is already listening")
+
 type Server struct {
 	cfg       *config.Store
 	logger    *log.Logger
@@ -40,7 +42,7 @@ func (s *Server) ListenAndServe() error {
 	return s.Run(context.Background())
 }
 
-// LoopbackListening reports whether 127.0.0.1:port already accepts TCP connections.
+// LoopbackListening reports whether WebTabinal is already serving on 127.0.0.1:port.
 func LoopbackListening(port int) bool {
 	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
 	conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
@@ -48,6 +50,13 @@ func LoopbackListening(port int) bool {
 		return false
 	}
 	_ = conn.Close()
+
+	client := &http.Client{Timeout: 300 * time.Millisecond}
+	resp, err := client.Get("http://" + addr + "/api/config")
+	if err != nil {
+		return false
+	}
+	_ = resp.Body.Close()
 	return true
 }
 
@@ -56,7 +65,7 @@ func (s *Server) Run(ctx context.Context) error {
 	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(s.boundPort))
 	if LoopbackListening(s.boundPort) {
 		s.logger.Printf("already listening on http://%s; exiting successfully", addr)
-		return nil
+		return ErrAlreadyRunning
 	}
 	s.logger.Printf("listening on http://%s", addr)
 	httpServer := &http.Server{

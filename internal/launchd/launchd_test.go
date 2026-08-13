@@ -6,6 +6,28 @@ import (
 	"testing"
 )
 
+func TestWritePlistUsesSuccessfulExitKeepAlive(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := WritePlist("/tmp/webtabinal"); err != nil {
+		t.Fatal(err)
+	}
+	path, err := PlistPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "<key>SuccessfulExit</key>") {
+		t.Fatalf("plist missing SuccessfulExit KeepAlive key: %s", content)
+	}
+	if strings.Contains(content, "<key>KeepAlive</key>\n  <true/>") {
+		t.Fatalf("plist still uses unconditional KeepAlive: %s", content)
+	}
+}
+
 func TestWritePlistUsesDedicatedStdioLog(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if err := WritePlist("/tmp/webtabinal"); err != nil {

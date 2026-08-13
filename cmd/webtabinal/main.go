@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -92,11 +93,6 @@ func runServe() error {
 	if err != nil {
 		return err
 	}
-	port := cfg.Get().Port
-	if server.LoopbackListening(port) {
-		logger.Printf("already listening on http://127.0.0.1:%d; exiting successfully", port)
-		return nil
-	}
 	if err := integration.Write(); err != nil {
 		return err
 	}
@@ -112,7 +108,13 @@ func runServe() error {
 		logger.Printf("warning: embedded frontend is a placeholder; run `make build` (not `go run` / `go build` alone) before serve")
 	}
 	srv := server.New(cfg, logger, hub, static.Handler())
-	return srv.Run(ctx)
+	if err := srv.Run(ctx); err != nil {
+		if errors.Is(err, server.ErrAlreadyRunning) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func usage() {

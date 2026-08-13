@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"io"
 	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -203,26 +206,35 @@ func TestInputWriteFailureIsLogged(t *testing.T) {
 	}
 }
 
-func TestRunExitsSuccessfullyWhenPortAlreadyListening(t *testing.T) {
+func TestRunReturnsErrAlreadyRunningWhenPortAlreadyListening(t *testing.T) {
 	store := testConfigStore(t)
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	manager := session.NewManager(store, log.New(io.Discard, "", 0))
+	defer manager.Close()
+	hub := NewHub(manager, store, log.New(io.Discard, "", 0))
+	existing := New(store, log.New(io.Discard, "", 0), hub, nil)
+	httpSrv := httptest.NewServer(existing.Handler())
+	defer httpSrv.Close()
+
+	u, err := url.Parse(httpSrv.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
-	port := listener.Addr().(*net.TCPAddr).Port
+	port, err := strconv.Atoi(u.Port())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := store.Patch(map[string]any{"port": port}); err != nil {
 		t.Fatal(err)
 	}
 
 	var logs bytes.Buffer
-	srv := New(store, log.New(&logs, "", 0), nil, nil)
+	srv := New(store, log.New(&logs, "", 0), hub, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	err = srv.Run(ctx)
-	if err != nil {
-		t.Fatalf("Run = %v, want nil", err)
+	if !errors.Is(err, ErrAlreadyRunning) {
+		t.Fatalf("Run = %v, want ErrAlreadyRunning", err)
 	}
 	if !strings.Contains(logs.String(), "already listening") {
 		t.Fatalf("log = %q, want already listening message", logs.String())
@@ -230,23 +242,43 @@ func TestRunExitsSuccessfullyWhenPortAlreadyListening(t *testing.T) {
 }
 
 func TestLoopbackListening(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	store := testConfigStore(t)
+	srv := New(store, log.New(io.Discard, "", 0), nil, nil)
+	httpSrv := httptest.NewServer(srv.Handler())
+	defer httpSrv.Close()
+
+	u, err := url.Parse(httpSrv.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	if !LoopbackListening(port) {
-		t.Fatal("expected listening port to report true")
-	}
-	if err := listener.Close(); err != nil {
+	port, err := strconv.Atoi(u.Port())
+	if err != nil {
 		t.Fatal(err)
 	}
+	if !LoopbackListening(port) {
+		t.Fatal("expected WebTabinal server to report true")
+	}
+	httpSrv.Close()
 	deadline := time.Now().Add(2 * time.Second)
 	for LoopbackListening(port) {
 		if time.Now().After(deadline) {
 			t.Fatal("expected closed port to report false")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestLoopbackListeningPlainTCPOnly(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	if LoopbackListening(port) {
+		t.Fatal("expected plain TCP listener without WebTabinal HTTP to report false")
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 
