@@ -24,6 +24,11 @@ export const api = {
     req<SessionInfo>(`/api/sessions/${id}/restart`, { method: 'POST' }),
   deleteSession: (id: string) =>
     req<void>(`/api/sessions/${id}`, { method: 'DELETE' }),
+  patchSessionMemo: (id: string, memo: string) =>
+    req<SessionInfo>(`/api/sessions/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ memo }),
+    }),
   reorderSessions: (ids: string[]) =>
     req<{ sessions: SessionInfo[] }>('/api/sessions/order', {
       method: 'PUT',

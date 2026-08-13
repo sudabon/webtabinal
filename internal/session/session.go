@@ -8,9 +8,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/creack/pty"
 	"github.com/google/uuid"
@@ -38,6 +40,7 @@ type Session struct {
 	LastRunMs  int64
 	Ring       *RingBuffer
 	Integrated bool
+	Memo       string
 	Cols       uint16
 	Rows       uint16
 
@@ -61,8 +64,11 @@ type Info struct {
 	State      State  `json:"state"`
 	ExitCode   *int   `json:"exit"`
 	Integrated bool   `json:"integrated"`
+	Memo       string `json:"memo"`
 	RunMs      int64  `json:"run_ms,omitempty"`
 }
+
+const MaxMemoRunes = 30
 
 func (s *Session) Info() Info {
 	s.mu.Lock()
@@ -75,12 +81,25 @@ func (s *Session) Info() Info {
 		State:      s.State,
 		ExitCode:   s.ExitCode,
 		Integrated: s.Integrated,
+		Memo:       s.Memo,
 		RunMs:      s.LastRunMs,
 	}
 	if s.State == StateRunning && !s.RunStarted.IsZero() {
 		info.RunMs = time.Since(s.RunStarted).Milliseconds()
 	}
 	return info
+}
+
+// SetMemo trims and stores memo. Values longer than MaxMemoRunes Unicode code points are rejected.
+func (s *Session) SetMemo(memo string) error {
+	memo = strings.TrimSpace(memo)
+	if utf8.RuneCountInString(memo) > MaxMemoRunes {
+		return fmt.Errorf("memo exceeds %d characters", MaxMemoRunes)
+	}
+	s.mu.Lock()
+	s.Memo = memo
+	s.mu.Unlock()
+	return nil
 }
 
 type CreateOpts struct {

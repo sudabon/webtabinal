@@ -14,15 +14,20 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Settings } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import type { SessionInfo } from '../types';
 import { cwdBasename, formatElapsed } from '../util';
+
+const MEMO_TOOLTIP_DELAY_MS = 2000;
 
 type Props = {
   sessions: SessionInfo[];
   activeId: string | null;
   width: number;
   unread: Set<string>;
+  memoEditorOpen: boolean;
   onSelect: (id: string) => void;
+  onEditMemo: (id: string) => void;
   onNew: () => void;
   onOpenSettings: () => void;
   onReorder: (ids: string[]) => void;
@@ -37,7 +42,9 @@ function SortableTab({
   session,
   active,
   unread,
+  memoEditorOpen,
   onSelect,
+  onEditMemo,
   onDuplicate,
   onRestart,
   onClose,
@@ -45,7 +52,9 @@ function SortableTab({
   session: SessionInfo;
   active: boolean;
   unread: boolean;
+  memoEditorOpen: boolean;
   onSelect: () => void;
+  onEditMemo: () => void;
   onDuplicate: () => void;
   onRestart: () => void;
   onClose: () => void;
@@ -58,6 +67,24 @@ function SortableTab({
     transition,
     opacity: isDragging ? 0.7 : 1,
   };
+  const [tooltipVisible, setTooltipVisible] = useState(false);
+  const hoverTimer = useRef<number | null>(null);
+
+  const clearHoverTimer = () => {
+    if (hoverTimer.current != null) {
+      window.clearTimeout(hoverTimer.current);
+      hoverTimer.current = null;
+    }
+  };
+
+  useEffect(() => {
+    if (memoEditorOpen) {
+      clearHoverTimer();
+      setTooltipVisible(false);
+    }
+  }, [memoEditorOpen]);
+
+  useEffect(() => () => clearHoverTimer(), []);
 
   const cmdOpacity = session.state === 'running' ? 1 : 0.5;
   const stateLabel =
@@ -69,12 +96,27 @@ function SortableTab({
           ? '○ starting'
           : '○ idle';
 
+  const memo = session.memo?.trim() ?? '';
+
   return (
     <div
       ref={setNodeRef}
       style={style}
       className={`tab ${active ? 'active' : ''} ${session.state === 'exited' ? 'exited' : ''}`}
       onClick={onSelect}
+      onDoubleClick={(e) => {
+        e.stopPropagation();
+        onEditMemo();
+      }}
+      onMouseEnter={() => {
+        if (!memo || memoEditorOpen) return;
+        clearHoverTimer();
+        hoverTimer.current = window.setTimeout(() => setTooltipVisible(true), MEMO_TOOLTIP_DELAY_MS);
+      }}
+      onMouseLeave={() => {
+        clearHoverTimer();
+        setTooltipVisible(false);
+      }}
       onContextMenu={(e) => {
         e.preventDefault();
         const action = window.prompt(
@@ -88,6 +130,11 @@ function SortableTab({
       {...attributes}
       {...listeners}
     >
+      {tooltipVisible && memo && (
+        <div className="tab-memo-tooltip" role="tooltip">
+          {memo}
+        </div>
+      )}
       <div className="tab-cwd">
         {cwdBasename(session.cwd)}
         {!session.integrated && <span className="no-int" title="shell integration off">◌</span>}
@@ -127,7 +174,9 @@ export function Sidebar(props: Props) {
                 session={s}
                 active={s.id === props.activeId}
                 unread={props.unread.has(s.id)}
+                memoEditorOpen={props.memoEditorOpen}
                 onSelect={() => props.onSelect(s.id)}
+                onEditMemo={() => props.onEditMemo(s.id)}
                 onDuplicate={() => props.onDuplicate(s.id)}
                 onRestart={() => props.onRestart(s.id)}
                 onClose={() => props.onClose(s.id)}

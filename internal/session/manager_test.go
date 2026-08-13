@@ -94,3 +94,58 @@ func TestRestartKeepsExitedSessionWhenReplacementFails(t *testing.T) {
 		t.Fatal("old session was closed after replacement failed")
 	}
 }
+
+func TestHandleExitRemovesSessionOnCleanExit(t *testing.T) {
+	store := newManagerConfig(t, `{"close_tab_on_clean_exit":true,"shell":"/bin/zsh","auth_token":"test"}`)
+	code := 0
+	s := &Session{ID: "s1", State: StateExited, ExitCode: &code}
+	m := &Manager{
+		sessions: map[string]*Session{s.ID: s},
+		order:    []string{s.ID},
+		cfg:      store,
+	}
+
+	m.handleExit(s)
+
+	if _, ok := m.Get(s.ID); ok {
+		t.Fatal("clean exit should remove the session")
+	}
+	if len(m.List()) != 0 {
+		t.Fatalf("session list = %d, want 0", len(m.List()))
+	}
+}
+
+func TestHandleExitKeepsSessionOnNonZeroExit(t *testing.T) {
+	store := newManagerConfig(t, `{"close_tab_on_clean_exit":true,"shell":"/bin/zsh","auth_token":"test"}`)
+	code := 1
+	s := &Session{ID: "s1", State: StateExited, ExitCode: &code}
+	m := &Manager{
+		sessions: map[string]*Session{s.ID: s},
+		order:    []string{s.ID},
+		cfg:      store,
+	}
+
+	m.handleExit(s)
+
+	if _, ok := m.Get(s.ID); !ok {
+		t.Fatal("non-zero exit should keep the session")
+	}
+}
+
+func newManagerConfig(t *testing.T, raw string) *config.Store {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	configDir := filepath.Join(home, "Library", "Application Support", "WebTabinal")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := config.LoadOrCreate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store
+}

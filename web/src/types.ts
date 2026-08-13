@@ -8,6 +8,7 @@ export type SessionInfo = {
   state: SessionState;
   exit: number | null;
   integrated: boolean;
+  memo: string;
   run_ms?: number;
 };
 

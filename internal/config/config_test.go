@@ -50,6 +50,12 @@ func TestPatchRejectsInvalidConfig(t *testing.T) {
 	}
 }
 
+func TestCloseTabOnCleanExitDefaultsToTrue(t *testing.T) {
+	if got := Defaults().CloseTabOnCleanExit; !got {
+		t.Fatal("Defaults().CloseTabOnCleanExit = false, want true")
+	}
+}
+
 func TestColorSchemeDefaultsToSystem(t *testing.T) {
 	if got := Defaults().ColorScheme; got != ColorSchemeSystem {
 		t.Fatalf("Defaults().ColorScheme = %q, want %q", got, ColorSchemeSystem)

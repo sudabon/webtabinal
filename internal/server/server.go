@@ -178,6 +178,7 @@ func (s *Server) routes(static http.Handler) {
 	s.mux.HandleFunc("POST /api/sessions", s.handleCreateSession)
 	s.mux.HandleFunc("POST /api/sessions/{id}/duplicate", s.handleDuplicateSession)
 	s.mux.HandleFunc("POST /api/sessions/{id}/restart", s.handleRestartSession)
+	s.mux.HandleFunc("PATCH /api/sessions/{id}", s.handlePatchSession)
 	s.mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDeleteSession)
 	s.mux.HandleFunc("PUT /api/sessions/order", s.handleReorderSessions)
 	s.mux.HandleFunc("GET /api/config", s.handleGetConfig)

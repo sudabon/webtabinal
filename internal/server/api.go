@@ -47,6 +47,27 @@ func (s *Server) handleRestartSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, sess.Info())
 }
 
+func (s *Server) handlePatchSession(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var body struct {
+		Memo *string `json:"memo"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if body.Memo == nil {
+		http.Error(w, "memo is required", http.StatusBadRequest)
+		return
+	}
+	sess, err := s.hub.manager.SetMemo(id, *body.Memo)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, http.StatusOK, sess.Info())
+}
+
 func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := s.hub.manager.Delete(id); err != nil {

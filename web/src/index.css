@@ -103,6 +103,7 @@ body,
 }
 
 .tab {
+  position: relative;
   padding: 8px 10px;
   border-radius: 6px;
   margin-bottom: 4px;
@@ -116,6 +117,25 @@ body,
 
 .tab.active {
   background: var(--active);
+}
+
+.tab-memo-tooltip {
+  position: absolute;
+  left: calc(100% + 8px);
+  top: 8px;
+  z-index: 20;
+  max-width: 220px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: 0 8px 24px var(--shadow);
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  word-break: break-word;
+  pointer-events: none;
 }
 
 .tab-cwd {
@@ -204,18 +224,25 @@ body,
 .main {
   flex: 1;
   min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   background: var(--bg);
   overflow: hidden;
 }
 
 .terminal-host {
-  height: 100%;
+  flex: 1;
+  min-height: 0;
+  position: relative;
   padding: 4px;
   overflow: hidden;
 }
 
 .terminal-host .xterm {
-  height: 100%;
+  position: absolute;
+  inset: 4px;
+  height: auto;
   overflow: hidden;
 }
 
@@ -406,4 +433,91 @@ body,
 
 .settings-close:hover {
   border-color: var(--accent);
+}
+
+.memo-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  background: var(--overlay);
+}
+
+.memo-modal {
+  width: min(360px, calc(100vw - 48px));
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: 0 16px 48px var(--shadow);
+}
+
+.memo-modal-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.memo-modal-header h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.memo-remaining {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.memo-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--sidebar);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.memo-input:focus {
+  outline: 1px solid var(--accent);
+  border-color: var(--accent);
+}
+
+.memo-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.memo-cancel,
+.memo-save {
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--sidebar);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.memo-save {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.memo-cancel:hover,
+.memo-save:hover {
+  background: var(--hover);
+}
+
+.memo-cancel:disabled,
+.memo-save:disabled {
+  opacity: 0.6;
+  cursor: default;
 }

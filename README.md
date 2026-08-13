@@ -72,7 +72,7 @@ make build
 | `confirm_close_running` | `true` |
 | `copy_on_select` | `false` |
 | `quit_when_no_tabs` | `true` |
-| `close_tab_on_clean_exit` | `false` |
+| `close_tab_on_clean_exit` | `true`（Ctrl+D などでシェルが exit 0 のときタブを閉じる） |
 | 新しいタブ | `Cmd+N`（またはサイドバーの ＋） |
 | タブ切り替え | `Cmd+1` … `Cmd+9` |
 | 設定 | `~/Library/Application Support/WebTabinal/config.json`（32バイトのランダムな `auth_token` を含むため、共有・コミットしないでください） |

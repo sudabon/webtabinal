@@ -22,6 +22,46 @@ export function isStandalone(): boolean {
   return Boolean((window as Window & { __WEBTABINAL_DESKTOP__?: boolean }).__WEBTABINAL_DESKTOP__);
 }
 
+export function shouldUseWebglRenderer(
+  userAgent = typeof navigator === 'undefined' ? '' : navigator.userAgent,
+  desktop = typeof window !== 'undefined' &&
+    Boolean((window as Window & { __WEBTABINAL_DESKTOP__?: boolean }).__WEBTABINAL_DESKTOP__),
+): boolean {
+  if (desktop) return false;
+  if (/Chrome|Chromium|CriOS/i.test(userAgent)) return true;
+  if (/AppleWebKit/i.test(userAgent)) return false;
+  return true;
+}
+
+export type SessionBootstrapAction =
+  | { type: 'create' }
+  | { type: 'restart'; id: string }
+  | { type: 'none' };
+
+export function sessionBootstrapAction(
+  sessions: Array<{ id: string; state: string }>,
+  activeId: string | null,
+): SessionBootstrapAction {
+  if (sessions.length === 0) return { type: 'create' };
+  const active = sessions.find((session) => session.id === activeId) ?? sessions[0];
+  if (active.state === 'exited') return { type: 'restart', id: active.id };
+  return { type: 'none' };
+}
+
 export function openExternalLink(uri: string): void {
   window.open(uri, '_blank', 'noopener');
 }
+
+export const MAX_MEMO_CODE_POINTS = 30;
+
+export function unicodeLength(value: string): number {
+  return Array.from(value).length;
+}
+
+/** Clamp to at most `max` Unicode code points (keeps earlier characters). */
+export function clampUnicode(value: string, max = MAX_MEMO_CODE_POINTS): string {
+  const chars = Array.from(value);
+  if (chars.length <= max) return value;
+  return chars.slice(0, max).join('');
+}
+

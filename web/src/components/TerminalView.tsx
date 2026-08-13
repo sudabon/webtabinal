@@ -7,7 +7,7 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
 import { terminalTheme, type ResolvedTheme } from '../theme';
 import type { AppConfig } from '../types';
-import { openExternalLink } from '../util';
+import { openExternalLink, shouldUseWebglRenderer } from '../util';
 import { decodeB64Bytes, TerminalSocket } from '../ws';
 
 type Props = {
@@ -45,10 +45,12 @@ export function TerminalView({ sessionId, socket, config, copyOnSelect, theme }:
     term.loadAddon(search);
     term.loadAddon(links);
     term.open(hostRef.current);
-    try {
-      term.loadAddon(new WebglAddon());
-    } catch {
-      /* canvas fallback */
+    if (shouldUseWebglRenderer()) {
+      try {
+        term.loadAddon(new WebglAddon());
+      } catch {
+        /* DOM renderer fallback */
+      }
     }
     fit.fit();
     termRef.current = term;

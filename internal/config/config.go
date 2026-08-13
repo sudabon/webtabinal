@@ -63,7 +63,7 @@ func Defaults() Config {
 		ConfirmCloseRunning: true,
 		CopyOnSelect:        false,
 		QuitWhenNoTabs:      true,
-		CloseTabOnCleanExit: false,
+		CloseTabOnCleanExit: true,
 	}
 }
 

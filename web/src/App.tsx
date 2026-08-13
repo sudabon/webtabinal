@@ -3,10 +3,11 @@ import { api } from './api';
 import { bootErrorMessage, loadInitialConfig } from './boot';
 import { SettingsModal } from './components/SettingsModal';
 import { Sidebar } from './components/Sidebar';
+import { TabMemoModal } from './components/TabMemoModal';
 import { TerminalView } from './components/TerminalView';
 import { useColorScheme } from './theme';
 import type { AppConfig, ColorScheme, ServerMsg, SessionInfo } from './types';
-import { cwdBasename, isStandalone } from './util';
+import { cwdBasename, isStandalone, sessionBootstrapAction } from './util';
 import { TerminalSocket } from './ws';
 
 export default function App() {
@@ -20,6 +21,7 @@ export default function App() {
   const [bootError, setBootError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [memoSessionId, setMemoSessionId] = useState<string | null>(null);
   const prevCount = useRef<number | null>(null);
   const bootstrapped = useRef(false);
   const everConnected = useRef(false);
@@ -187,15 +189,25 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!bootstrapped.current && sessionsLoaded && sessions.length === 0 && socket) {
+    if (bootstrapped.current || !sessionsLoaded || !socket) return;
+    const action = sessionBootstrapAction(sessions, activeId);
+    if (action.type === 'none') {
       bootstrapped.current = true;
-      void api.createSession().catch((err: unknown) => {
-        console.error(err);
-        setBootError(bootErrorMessage(err));
-        setEmptyVisible(true);
-      });
+      return;
     }
-  }, [sessions, sessionsLoaded, socket]);
+    bootstrapped.current = true;
+    const task = action.type === 'create'
+      ? api.createSession()
+      : api.restartSession(action.id).then((session) => {
+          setActiveId(session.id);
+          return session;
+        });
+    void task.catch((err: unknown) => {
+      console.error(err);
+      setBootError(bootErrorMessage(err));
+      setEmptyVisible(true);
+    });
+  }, [sessions, sessionsLoaded, socket, activeId]);
 
   useEffect(() => {
     const count = sessions.length;
@@ -351,7 +363,12 @@ export default function App() {
         activeId={activeId}
         width={width}
         unread={unread}
+        memoEditorOpen={memoSessionId != null}
         onSelect={select}
+        onEditMemo={(id) => {
+          setActiveId(id);
+          setMemoSessionId(id);
+        }}
         onNew={() => void createTab()}
         onOpenSettings={() => setSettingsOpen(true)}
         onReorder={(ids) => {
@@ -387,6 +404,22 @@ export default function App() {
         colorScheme={config?.color_scheme ?? 'system'}
         onColorSchemeChange={(scheme) => void changeColorScheme(scheme)}
         onClose={() => setSettingsOpen(false)}
+      />
+      <TabMemoModal
+        open={memoSessionId != null}
+        initialMemo={sessions.find((s) => s.id === memoSessionId)?.memo ?? ''}
+        onClose={() => setMemoSessionId(null)}
+        onSave={async (memo) => {
+          if (!memoSessionId) return;
+          try {
+            const updated = await api.patchSessionMemo(memoSessionId, memo);
+            setSessions((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+            setMemoSessionId(null);
+          } catch (err) {
+            reportActionError(err);
+            throw err;
+          }
+        }}
       />
     </div>
   );

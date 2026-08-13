@@ -135,6 +135,7 @@ func (m *Manager) Duplicate(id string) (*Session, error) {
 		return nil, fmt.Errorf("session not found")
 	}
 	info := s.Info()
+	// Memo is intentionally not copied: duplicate is a separate session.
 	return m.Create(info.Cwd)
 }
 
@@ -149,10 +150,13 @@ func (m *Manager) Restart(id string) (*Session, error) {
 	}
 	order := info.Order
 	cwd := info.Cwd
+	memo := info.Memo
 	ns, err := m.Create(cwd)
 	if err != nil {
 		return nil, err
 	}
+	// Memo was already validated when stored on the old session.
+	_ = ns.SetMemo(memo)
 	_ = s.Close()
 
 	m.mu.Lock()
@@ -190,6 +194,23 @@ func (m *Manager) Restart(id string) (*Session, error) {
 		onChange()
 	}
 	return ns, nil
+}
+
+func (m *Manager) SetMemo(id, memo string) (*Session, error) {
+	s, ok := m.Get(id)
+	if !ok {
+		return nil, fmt.Errorf("session not found")
+	}
+	if err := s.SetMemo(memo); err != nil {
+		return nil, err
+	}
+	m.mu.RLock()
+	onChange := m.onChange
+	m.mu.RUnlock()
+	if onChange != nil {
+		onChange()
+	}
+	return s, nil
 }
 
 func (m *Manager) Delete(id string) error {

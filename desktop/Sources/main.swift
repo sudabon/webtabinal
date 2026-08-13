@@ -7,12 +7,26 @@ private let defaultPort = 8642
 private let startupTimeout: TimeInterval = 15
 private let probeInterval: TimeInterval = 0.15
 
+/// WKWebView swallows Command key equivalents; forward them to the app menu so Cmd+Q quits.
+private final class DesktopWebView: WKWebView {
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if NSApp.mainMenu?.performKeyEquivalent(with: event) == true {
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavigationDelegate, WKUIDelegate, NSWindowDelegate {
     private var window: NSWindow!
     private var webView: WKWebView!
     private var port = defaultPort
     private var logPath: String = ""
     private var initialLoadFinished = false
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        setupMainMenu()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         logPath = daemonLogPath()
@@ -85,10 +99,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         """
         ucc.addUserScript(WKUserScript(source: bootstrap, injectionTime: .atDocumentStart, forMainFrameOnly: true))
 
-        webView = WKWebView(frame: rect, configuration: config)
+        webView = DesktopWebView(frame: rect, configuration: config)
         webView.navigationDelegate = self
         webView.uiDelegate = self
         window.contentView = webView
+    }
+
+    private func setupMainMenu() {
+        let mainMenu = NSMenu()
+
+        let appItem = NSMenuItem()
+        mainMenu.addItem(appItem)
+        let appMenu = NSMenu()
+        appItem.submenu = appMenu
+        appMenu.addItem(
+            withTitle: "About \(appName)",
+            action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
+            keyEquivalent: ""
+        )
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Hide \(appName)", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        let hideOthers = appMenu.addItem(
+            withTitle: "Hide Others",
+            action: #selector(NSApplication.hideOtherApplications(_:)),
+            keyEquivalent: "h"
+        )
+        hideOthers.keyEquivalentModifierMask = [.command, .option]
+        appMenu.addItem(
+            withTitle: "Show All",
+            action: #selector(NSApplication.unhideAllApplications(_:)),
+            keyEquivalent: ""
+        )
+        appMenu.addItem(.separator())
+        appMenu.addItem(
+            withTitle: "Quit \(appName)",
+            action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q"
+        )
+
+        NSApp.mainMenu = mainMenu
     }
 
     private func showWindow() {
@@ -209,6 +258,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         initialLoadFinished = true
+        webView.becomeFirstResponder()
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {

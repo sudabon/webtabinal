@@ -98,11 +98,13 @@ function mockModules(hooks: HookHarness, api: object): Plugin {
     `],
     ['./components/SettingsModal', 'export function SettingsModal() {}'],
     ['./components/Sidebar', 'export function Sidebar() {}'],
+    ['./components/TabMemoModal', 'export function TabMemoModal() {}'],
     ['./components/TerminalView', 'export function TerminalView() {}'],
     ['./theme', 'export function useColorScheme() { return {}; }'],
     ['./util', `
       export function cwdBasename(value) { return value; }
       export function isStandalone() { return false; }
+      export function sessionBootstrapAction() { return { type: 'none' }; }
     `],
     ['./ws', `
       export class TerminalSocket {
@@ -182,7 +184,11 @@ test('latest failed color scheme change rolls back to the server-confirmed schem
   const render = () => {
     hooks.beginRender();
     const tree = App();
-    return tree.props.children.at(-1)?.props as {
+    const children = tree.props.children as Array<{ props?: Record<string, unknown> } | false | null>;
+    const settings = children.find(
+      (child) => child && typeof child === 'object' && child.props && 'colorScheme' in child.props,
+    );
+    return settings?.props as {
       colorScheme: ColorScheme;
       onColorSchemeChange: (scheme: ColorScheme) => void;
     };
@@ -262,7 +268,11 @@ test('stale successful color scheme syncs UI after a newer failure', async (t) =
   const render = () => {
     hooks.beginRender();
     const tree = App();
-    return tree.props.children.at(-1)?.props as {
+    const children = tree.props.children as Array<{ props?: Record<string, unknown> } | false | null>;
+    const settings = children.find(
+      (child) => child && typeof child === 'object' && child.props && 'colorScheme' in child.props,
+    );
+    return settings?.props as {
       colorScheme: ColorScheme;
       onColorSchemeChange: (scheme: ColorScheme) => void;
     };
