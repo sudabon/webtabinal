@@ -7,6 +7,7 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
 import { terminalTheme, type ResolvedTheme } from '../theme';
 import type { AppConfig } from '../types';
+import { openExternalLink } from '../util';
 import { decodeB64Bytes, TerminalSocket } from '../ws';
 
 type Props = {
@@ -39,7 +40,7 @@ export function TerminalView({ sessionId, socket, config, copyOnSelect, theme }:
     });
     const fit = new FitAddon();
     const search = new SearchAddon();
-    const links = new WebLinksAddon();
+    const links = new WebLinksAddon((_event, uri) => openExternalLink(uri));
     term.loadAddon(fit);
     term.loadAddon(search);
     term.loadAddon(links);

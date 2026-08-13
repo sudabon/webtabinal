@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -107,7 +108,13 @@ func runServe() error {
 		logger.Printf("warning: embedded frontend is a placeholder; run `make build` (not `go run` / `go build` alone) before serve")
 	}
 	srv := server.New(cfg, logger, hub, static.Handler())
-	return srv.Run(ctx)
+	if err := srv.Run(ctx); err != nil {
+		if errors.Is(err, server.ErrAlreadyRunning) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func usage() {

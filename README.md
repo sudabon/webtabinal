@@ -1,17 +1,31 @@
 # WebTabinal
 
-macOS 向けのローカル専用ブラウザターミナルです。Go デーモンが PTY を管理し、React + xterm.js が PWA 上で描画します。
+macOS 向けのローカル専用ブラウザターミナルです。Go デーモンが PTY を管理し、React + xterm.js が描画します。推奨のデスクトップ入口はネイティブ `.app` です（Dock / Finder から開くと、未起動ならデーモンも起動します）。
 
-## クイックスタート
+## クイックスタート（推奨: デスクトップアプリ）
+
+```bash
+# フロントエンド・デーモン・.app をビルド
+make desktop
+
+# Dock / Finder から開く（未起動ならデーモンを起動してウィンドウを表示）
+open bin/WebTabinal.app
+```
+
+継続利用する場合は `/Applications` など固定の場所へコピーしてください。`bin/` 配下の `.app` は `make clean` や再ビルド（`make desktop`）で削除されます。
+
+ウィンドウを閉じてもデーモンとセッションは残ります。再オープンすると既存デーモンに再接続します。
+
+## CLI で起動する場合
 
 ```bash
 # フロントエンドとデーモンをビルド
 make build
 
-# フォアグラウンドで起動
+# フォアグラウンドで起動（既にデーモンが listen 中ならその旨を表示して終了）
 ./bin/webtabinal serve
 
-# UI を開く
+# UI を開く（ブラウザ）
 ./bin/webtabinal open
 # → http://127.0.0.1:8642
 ```
@@ -26,7 +40,9 @@ make build
 [[ -n "$WEBTABINAL_SESSION_ID" ]] && source "$HOME/Library/Application Support/WebTabinal/integration.zsh"
 ```
 
-## LaunchAgent としてインストール
+## LaunchAgent（任意: ログイン時の常駐）
+
+`.app` がデーモンを起動できるため必須ではありません。ログイン時から常駐させたい場合や、デーモンが異常終了したときに KeepAlive で復帰させたい場合に使います（正常終了や「既に listen 中」の成功終了では再起動しません）。
 
 ```bash
 make build
@@ -62,9 +78,9 @@ make build
 | 設定 | `~/Library/Application Support/WebTabinal/config.json`（32バイトのランダムな `auth_token` を含むため、共有・コミットしないでください） |
 | ログ | `~/Library/Logs/WebTabinal/daemon.log` |
 
-## PWA
+## PWA（任意）
 
-Chrome の「インストール」または Safari の「Dock に追加」から追加できます。standalone では最後のタブを閉じるとウィンドウも終了します（デーモンは常駐のまま）。この終了挙動は `quit_when_no_tabs` を `false` にすると無効化できます。
+Chrome の「インストール」または Safari の「Dock に追加」から追加できます。推奨の Dock 入口は `.app` ですが、PWA もそのまま使えます。standalone / ネイティブウィンドウでは最後のタブを閉じるとウィンドウも終了します（デーモンは常駐のまま）。この終了挙動は `quit_when_no_tabs` を `false` にすると無効化できます。
 
 ## 開発
 

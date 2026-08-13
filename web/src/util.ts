@@ -17,5 +17,11 @@ export function formatElapsed(ms?: number): string {
 }
 
 export function isStandalone(): boolean {
-  return window.matchMedia('(display-mode: standalone)').matches;
+  if (typeof window === 'undefined') return false;
+  if (window.matchMedia('(display-mode: standalone)').matches) return true;
+  return Boolean((window as Window & { __WEBTABINAL_DESKTOP__?: boolean }).__WEBTABINAL_DESKTOP__);
+}
+
+export function openExternalLink(uri: string): void {
+  window.open(uri, '_blank', 'noopener');
 }

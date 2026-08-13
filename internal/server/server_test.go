@@ -4,12 +4,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"io"
 	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -200,6 +204,150 @@ func TestInputWriteFailureIsLogged(t *testing.T) {
 
 	if got := logs.String(); !strings.Contains(got, "session "+s.ID+" write:") {
 		t.Fatalf("log = %q, want session write error", got)
+	}
+}
+
+func TestRunReturnsErrAlreadyRunningWhenPortAlreadyListening(t *testing.T) {
+	store := testConfigStore(t)
+	manager := session.NewManager(store, log.New(io.Discard, "", 0))
+	defer manager.Close()
+	hub := NewHub(manager, store, log.New(io.Discard, "", 0))
+	httpSrv := httptest.NewUnstartedServer(nil)
+	defer httpSrv.Close()
+	port := httpSrv.Listener.Addr().(*net.TCPAddr).Port
+	if _, err := store.Patch(map[string]any{"port": port}); err != nil {
+		t.Fatal(err)
+	}
+	existing := New(store, log.New(io.Discard, "", 0), hub, nil)
+	httpSrv.Config.Handler = existing.Handler()
+	httpSrv.Start()
+
+	var logs bytes.Buffer
+	srv := New(store, log.New(&logs, "", 0), hub, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	err := srv.Run(ctx)
+	if !errors.Is(err, ErrAlreadyRunning) {
+		t.Fatalf("Run = %v, want ErrAlreadyRunning", err)
+	}
+	if !strings.Contains(logs.String(), "already listening") {
+		t.Fatalf("log = %q, want already listening message", logs.String())
+	}
+}
+
+func TestRunRechecksIdentityAfterBindRace(t *testing.T) {
+	store := testConfigStore(t)
+	manager := session.NewManager(store, log.New(io.Discard, "", 0))
+	defer manager.Close()
+	hub := NewHub(manager, store, log.New(io.Discard, "", 0))
+	httpSrv := httptest.NewUnstartedServer(nil)
+	defer httpSrv.Close()
+	port := httpSrv.Listener.Addr().(*net.TCPAddr).Port
+	if _, err := store.Patch(map[string]any{"port": port}); err != nil {
+		t.Fatal(err)
+	}
+	existing := New(store, log.New(io.Discard, "", 0), hub, nil)
+	var probes atomic.Int32
+	httpSrv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if probes.Add(1) == 1 {
+			http.NotFound(w, r)
+			return
+		}
+		existing.Handler().ServeHTTP(w, r)
+	})
+	httpSrv.Start()
+
+	srv := New(store, log.New(io.Discard, "", 0), hub, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	err := srv.Run(ctx)
+	if !errors.Is(err, ErrAlreadyRunning) {
+		t.Fatalf("Run = %v, want ErrAlreadyRunning after bind race", err)
+	}
+	if probes.Load() < 2 {
+		t.Fatalf("probe count = %d, want a post-bind retry", probes.Load())
+	}
+}
+
+func TestLoopbackListening(t *testing.T) {
+	store := testConfigStore(t)
+	httpSrv := httptest.NewUnstartedServer(nil)
+	defer httpSrv.Close()
+	port := httpSrv.Listener.Addr().(*net.TCPAddr).Port
+	if _, err := store.Patch(map[string]any{"port": port}); err != nil {
+		t.Fatal(err)
+	}
+	srv := New(store, log.New(io.Discard, "", 0), nil, nil)
+	httpSrv.Config.Handler = srv.Handler()
+	httpSrv.Start()
+	if !LoopbackListening(port) {
+		t.Fatal("expected WebTabinal server to report true")
+	}
+	httpSrv.Close()
+	deadline := time.Now().Add(2 * time.Second)
+	for LoopbackListening(port) {
+		if time.Now().After(deadline) {
+			t.Fatal("expected closed port to report false")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestLoopbackListeningRejectsUnrelatedHTTPServer(t *testing.T) {
+	httpSrv := httptest.NewServer(http.NotFoundHandler())
+	defer httpSrv.Close()
+	u, err := url.Parse(httpSrv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(u.Port())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if LoopbackListening(port) {
+		t.Fatal("expected unrelated HTTP server to report false")
+	}
+}
+
+func TestLoopbackListeningDoesNotFollowRedirects(t *testing.T) {
+	redirected := false
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		redirected = true
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer target.Close()
+	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusFound)
+	}))
+	defer redirect.Close()
+	u, err := url.Parse(redirect.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(u.Port())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if LoopbackListening(port) {
+		t.Fatal("expected redirecting HTTP server to report false")
+	}
+	if redirected {
+		t.Fatal("probe followed redirect away from the configured loopback port")
+	}
+}
+
+func TestLoopbackListeningPlainTCPOnly(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	if LoopbackListening(port) {
+		t.Fatal("expected plain TCP listener without WebTabinal HTTP to report false")
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 
