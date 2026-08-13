@@ -1,0 +1,157 @@
+package server
+
+import (
+	"context"
+	"crypto/subtle"
+	"encoding/json"
+	"errors"
+	"log"
+	"net"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/sudabon/webtabinal/internal/config"
+	"github.com/sudabon/webtabinal/internal/paths"
+)
+
+const cookieName = "webtabinal_token"
+
+type Server struct {
+	cfg       *config.Store
+	logger    *log.Logger
+	mux       *http.ServeMux
+	hub       *Hub
+	boundPort int
+}
+
+func New(cfg *config.Store, logger *log.Logger, hub *Hub, static http.Handler) *Server {
+	s := &Server{cfg: cfg, logger: logger, mux: http.NewServeMux(), hub: hub, boundPort: cfg.Get().Port}
+	s.routes(static)
+	return s
+}
+
+func (s *Server) Handler() http.Handler {
+	return s.withSecurity(s.mux)
+}
+
+func (s *Server) ListenAndServe() error {
+	return s.Run(context.Background())
+}
+
+func (s *Server) Run(ctx context.Context) error {
+	s.boundPort = s.cfg.Get().Port
+	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(s.boundPort))
+	s.logger.Printf("listening on http://%s", addr)
+	httpServer := &http.Server{
+		Addr:              addr,
+		Handler:           s.Handler(),
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	result := make(chan error, 1)
+	go func() {
+		result <- httpServer.ListenAndServe()
+	}()
+	select {
+	case err := <-result:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case <-ctx.Done():
+		shutdownErr := httpServer.Shutdown(context.Background())
+		err := <-result
+		if shutdownErr != nil {
+			return shutdownErr
+		}
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	}
+}
+
+func (s *Server) withSecurity(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'; style-src 'self' 'unsafe-inline'")
+
+		port := strconv.Itoa(s.boundPort)
+		hostOK := r.Host == "127.0.0.1:"+port || r.Host == "localhost:"+port
+		if !hostOK {
+			http.Error(w, "forbidden host", http.StatusForbidden)
+			return
+		}
+		if origin := r.Header.Get("Origin"); origin != "" {
+			ok := origin == "http://127.0.0.1:"+port || origin == "http://localhost:"+port
+			if !ok {
+				http.Error(w, "forbidden origin", http.StatusForbidden)
+				return
+			}
+		}
+
+		if r.Method == http.MethodGet && !strings.HasPrefix(r.URL.Path, "/api") {
+			s.setAuthCookie(w)
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		if strings.HasPrefix(r.URL.Path, "/api") {
+			if !s.validToken(r) {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) setAuthCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     cookieName,
+		Value:    s.cfg.AuthToken(),
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+	})
+}
+
+func (s *Server) validToken(r *http.Request) bool {
+	if c, err := r.Cookie(cookieName); err == nil && subtle.ConstantTimeCompare([]byte(c.Value), []byte(s.cfg.AuthToken())) == 1 {
+		return true
+	}
+	auth := r.Header.Get("Authorization")
+	if strings.HasPrefix(auth, "Bearer ") {
+		return subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(auth, "Bearer ")), []byte(s.cfg.AuthToken())) == 1
+	}
+	return false
+}
+
+func (s *Server) routes(static http.Handler) {
+	s.mux.HandleFunc("GET /api/sessions", s.handleListSessions)
+	s.mux.HandleFunc("POST /api/sessions", s.handleCreateSession)
+	s.mux.HandleFunc("POST /api/sessions/{id}/duplicate", s.handleDuplicateSession)
+	s.mux.HandleFunc("POST /api/sessions/{id}/restart", s.handleRestartSession)
+	s.mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDeleteSession)
+	s.mux.HandleFunc("PUT /api/sessions/order", s.handleReorderSessions)
+	s.mux.HandleFunc("GET /api/config", s.handleGetConfig)
+	s.mux.HandleFunc("PATCH /api/config", s.handlePatchConfig)
+	s.mux.HandleFunc("GET /api/ws", s.hub.HandleWS)
+	if static != nil {
+		s.mux.Handle("/", static)
+	} else {
+		s.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/plain")
+			_, _ = w.Write([]byte(paths.AppName + " daemon is running.\n"))
+		})
+	}
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}

@@ -1,0 +1,27 @@
+# Binary Files
+bin/
+web/dist/
+web/node_modules/
+internal/static/dist/*
+!internal/static/dist/index.html
+
+# Log Files
+*.log
+
+# MacOS
+.DS_Store
+
+# IDE
+.vscode/
+.specstory/
+.serena/
+
+# CodingAgent
+.cursor/
+.claude/
+.codex/
+
+# Cursor
+.cursorrules
+.cursorignore
+.cursorindexingignore

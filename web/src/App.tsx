@@ -1,0 +1,351 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { api } from './api';
+import { bootErrorMessage, loadInitialConfig } from './boot';
+import { Sidebar } from './components/Sidebar';
+import { TerminalView } from './components/TerminalView';
+import type { AppConfig, ServerMsg, SessionInfo } from './types';
+import { cwdBasename, isStandalone } from './util';
+import { TerminalSocket } from './ws';
+
+export default function App() {
+  const [sessions, setSessions] = useState<SessionInfo[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [config, setConfig] = useState<AppConfig | null>(null);
+  const [socket, setSocket] = useState<TerminalSocket | null>(null);
+  const [unread, setUnread] = useState<Set<string>>(new Set());
+  const [emptyVisible, setEmptyVisible] = useState(false);
+  const [sessionsLoaded, setSessionsLoaded] = useState(false);
+  const [bootError, setBootError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const prevCount = useRef<number | null>(null);
+  const bootstrapped = useRef(false);
+  const everConnected = useRef(false);
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
+  const activeRef = useRef(activeId);
+  activeRef.current = activeId;
+  const configRef = useRef(config);
+  configRef.current = config;
+  const focusedRef = useRef(document.hasFocus());
+
+  const badgeCount = unread.size;
+
+  const reportActionError = useCallback((err: unknown) => {
+    const message = bootErrorMessage(err);
+    console.error(err);
+    setActionError(message);
+  }, []);
+
+  useEffect(() => {
+    if (!actionError) return;
+    const timer = window.setTimeout(() => setActionError(null), 5000);
+    return () => window.clearTimeout(timer);
+  }, [actionError]);
+
+  useEffect(() => {
+    const onFocus = () => { focusedRef.current = true; };
+    const onBlur = () => { focusedRef.current = false; };
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('blur', onBlur);
+    };
+  }, []);
+
+  useEffect(() => {
+    if ('setAppBadge' in navigator) {
+      if (badgeCount > 0) void (navigator as Navigator & { setAppBadge: (n: number) => Promise<void> }).setAppBadge(badgeCount);
+      else void (navigator as Navigator & { clearAppBadge?: () => Promise<void> }).clearAppBadge?.();
+    }
+  }, [badgeCount]);
+
+  useEffect(() => {
+    const active = sessions.find((s) => s.id === activeId);
+    const name = active ? cwdBasename(active.cwd) : 'WebTabinal';
+    document.title = active ? `${name} — WebTabinal` : 'WebTabinal';
+  }, [sessions, activeId]);
+
+  useEffect(() => {
+    const running = sessions.some((s) => s.state === 'running');
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!running) return;
+      if (configRef.current && configRef.current.confirm_close_running === false) return;
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [sessions]);
+
+  const notifyCompletion = useCallback((sid: string, info: SessionInfo) => {
+    const cfg = configRef.current;
+    if (!cfg?.notification.enabled) return;
+    const active = activeRef.current === sid;
+    const focused = focusedRef.current;
+    if (!cfg.notification.always && active && focused) return;
+    if (cfg.notification.min_duration_ms > 0 && (info.run_ms ?? 0) < cfg.notification.min_duration_ms) return;
+
+    if (!active) {
+      setUnread((prev) => new Set(prev).add(sid));
+    }
+
+    if ('Notification' in window && Notification.permission === 'granted') {
+      const ok = info.exit === 0 || info.exit == null;
+      const title = `${ok ? '✓' : '✗'} ${info.command}${ok ? '' : ` (exit ${info.exit})`}`;
+      const body = `${cwdBasename(info.cwd)} ・ ${Math.round((info.run_ms ?? 0) / 1000)}s`;
+      const n = new Notification(title, { body });
+      n.onclick = () => {
+        window.focus();
+        setActiveId(sid);
+      };
+    }
+  }, []);
+
+  useEffect(() => {
+    let sock: TerminalSocket | null = null;
+    let cancelled = false;
+    (async () => {
+      const loaded = await loadInitialConfig(() => api.getConfig());
+      if (cancelled) return;
+      if (!loaded.ok) {
+        setBootError(loaded.error);
+        setEmptyVisible(true);
+        return;
+      }
+      setConfig(loaded.config);
+
+      if (isStandalone() && 'Notification' in window && Notification.permission === 'default') {
+        void Notification.requestPermission();
+      }
+
+      sock = new TerminalSocket({
+        onMessage: (msg) => {
+          window.dispatchEvent(new CustomEvent('webtabinal-ws', { detail: msg }));
+          handleMsg(msg);
+        },
+        onStatus: (connected) => {
+          if (!connected) return;
+          if (everConnected.current) {
+            window.dispatchEvent(new Event('webtabinal-ws-reconnect'));
+          }
+          everConnected.current = true;
+        },
+      });
+      setSocket(sock);
+
+      function handleMsg(msg: ServerMsg) {
+        if (msg.t === 'sessions') {
+          setSessionsLoaded(true);
+          setSessions(msg.list);
+          setActiveId((cur) => {
+            if (cur && msg.list.some((s) => s.id === cur)) return cur;
+            return msg.list[0]?.id ?? null;
+          });
+        }
+        if (msg.t === 'state') {
+          setSessions((prev) => {
+            const next = prev.map((s) => {
+              if (s.id !== msg.sid) return s;
+              const wasRunning = s.state === 'running';
+              const updated: SessionInfo = {
+                ...s,
+                cwd: msg.cwd,
+                command: msg.cmd,
+                state: msg.state,
+                exit: msg.exit,
+                integrated: msg.integrated,
+                run_ms: msg.run_ms,
+              };
+              if (wasRunning && msg.state === 'idle') {
+                queueMicrotask(() => notifyCompletion(msg.sid, updated));
+              }
+              return updated;
+            });
+            return next;
+          });
+        }
+        if (msg.t === 'error') {
+          setActionError(msg.message);
+          if (msg.code === 'attach_overflow' && msg.sid) {
+            window.dispatchEvent(new Event('webtabinal-ws-reconnect'));
+            sock?.attach(msg.sid);
+          }
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+      sock?.close();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!bootstrapped.current && sessionsLoaded && sessions.length === 0 && socket) {
+      bootstrapped.current = true;
+      void api.createSession().catch((err: unknown) => {
+        console.error(err);
+        setBootError(bootErrorMessage(err));
+        setEmptyVisible(true);
+      });
+    }
+  }, [sessions, sessionsLoaded, socket]);
+
+  useEffect(() => {
+    const count = sessions.length;
+    if (prevCount.current === 1 && count === 0) {
+      const quit = config?.quit_when_no_tabs !== false;
+      if (quit && isStandalone()) {
+        window.close();
+        window.setTimeout(() => setEmptyVisible(true), 300);
+      } else {
+        setEmptyVisible(true);
+      }
+    }
+    if (count > 0) setEmptyVisible(false);
+    prevCount.current = count;
+  }, [sessions, config]);
+
+  const select = (id: string) => {
+    setActiveId(id);
+    setUnread((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  };
+
+  const createTab = async () => {
+    try {
+      const s = await api.createSession();
+      setBootError(null);
+      setActiveId(s.id);
+    } catch (err) {
+      reportActionError(err);
+      if (emptyVisible) {
+        setBootError(bootErrorMessage(err));
+      }
+    }
+  };
+
+  const closeTab = async (id: string) => {
+    const s = sessions.find((x) => x.id === id);
+    if (s?.state === 'running' && config?.confirm_close_running !== false) {
+      if (!window.confirm('このタブは実行中です。閉じますか？')) return;
+    }
+    try {
+      await api.deleteSession(id);
+    } catch (err) {
+      reportActionError(err);
+    }
+  };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.metaKey) return;
+      if (e.key >= '1' && e.key <= '9') {
+        const idx = Number(e.key) - 1;
+        const s = sessionsRef.current[idx];
+        if (s) {
+          e.preventDefault();
+          select(s.id);
+        }
+      }
+      if (e.key.toLowerCase() === 'n') {
+        e.preventDefault();
+        void createTab();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const width = config?.sidebar_width ?? 240;
+
+  const onResizeWidth = useMemo(
+    () => (w: number) => {
+      setConfig((c) => (c ? { ...c, sidebar_width: w } : c));
+    },
+    [],
+  );
+
+  const onResizeWidthCommit = useMemo(
+    () => async (w: number) => {
+      try {
+        const next = await api.patchConfig({ sidebar_width: w });
+        setConfig(next);
+      } catch (err) {
+        reportActionError(err);
+      }
+    },
+    [reportActionError],
+  );
+
+  if (emptyVisible && sessions.length === 0) {
+    return (
+      <div className="empty">
+        <h1>{bootError ? '起動できませんでした' : 'すべてのタブを閉じました'}</h1>
+        {bootError && <p>{bootError}</p>}
+        <div className="empty-actions">
+          {bootError && (
+            <button type="button" onClick={() => window.location.reload()}>
+              再試行
+            </button>
+          )}
+          <button type="button" onClick={() => void createTab()}>
+            ＋ 新規タブ
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="app">
+      {actionError && (
+        <div className="toast-error" role="alert">
+          {actionError}
+          <button type="button" aria-label="閉じる" onClick={() => setActionError(null)}>
+            ×
+          </button>
+        </div>
+      )}
+      <Sidebar
+        sessions={sessions}
+        activeId={activeId}
+        width={width}
+        unread={unread}
+        onSelect={select}
+        onNew={() => void createTab()}
+        onReorder={(ids) => {
+          void api.reorderSessions(ids).catch(reportActionError);
+        }}
+        onDuplicate={(id) => {
+          void api
+            .duplicateSession(id)
+            .then((s) => setActiveId(s.id))
+            .catch(reportActionError);
+        }}
+        onRestart={(id) => {
+          void api
+            .restartSession(id)
+            .then((s) => setActiveId(s.id))
+            .catch(reportActionError);
+        }}
+        onClose={(id) => void closeTab(id)}
+        onResizeWidth={onResizeWidth}
+        onResizeWidthCommit={(w) => void onResizeWidthCommit(w)}
+      />
+      <main className="main">
+        <TerminalView
+          sessionId={activeId}
+          socket={socket}
+          config={config}
+          copyOnSelect={!!config?.copy_on_select}
+        />
+      </main>
+    </div>
+  );
+}
