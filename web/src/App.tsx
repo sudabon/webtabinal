@@ -13,6 +13,8 @@ export default function App() {
   const [socket, setSocket] = useState<TerminalSocket | null>(null);
   const [unread, setUnread] = useState<Set<string>>(new Set());
   const [emptyVisible, setEmptyVisible] = useState(false);
+  const [sessionsLoaded, setSessionsLoaded] = useState(false);
+  const [bootError, setBootError] = useState<string | null>(null);
   const prevCount = useRef<number | null>(null);
   const bootstrapped = useRef(false);
   const sessionsRef = useRef(sessions);
@@ -73,7 +75,7 @@ export default function App() {
       setUnread((prev) => new Set(prev).add(sid));
     }
 
-    if (Notification.permission === 'granted') {
+    if ('Notification' in window && Notification.permission === 'granted') {
       const ok = info.exit === 0 || info.exit == null;
       const title = `${ok ? '✓' : '✗'} ${info.command}${ok ? '' : ` (exit ${info.exit})`}`;
       const body = `${cwdBasename(info.cwd)} ・ ${Math.round((info.run_ms ?? 0) / 1000)}s`;
@@ -93,7 +95,7 @@ export default function App() {
       if (cancelled) return;
       setConfig(cfg);
 
-      if (isStandalone() && Notification.permission === 'default') {
+      if (isStandalone() && 'Notification' in window && Notification.permission === 'default') {
         void Notification.requestPermission();
       }
 
@@ -107,6 +109,7 @@ export default function App() {
 
       function handleMsg(msg: ServerMsg) {
         if (msg.t === 'sessions') {
+          setSessionsLoaded(true);
           setSessions(msg.list);
           setActiveId((cur) => {
             if (cur && msg.list.some((s) => s.id === cur)) return cur;
@@ -128,7 +131,7 @@ export default function App() {
                 run_ms: msg.run_ms,
               };
               if (wasRunning && msg.state === 'idle') {
-                queueMicrotask(() => notifyCompletion(msg.sid, { ...updated, run_ms: s.run_ms }));
+                queueMicrotask(() => notifyCompletion(msg.sid, updated));
               }
               return updated;
             });
@@ -145,11 +148,15 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!bootstrapped.current && sessions.length === 0 && socket) {
+    if (!bootstrapped.current && sessionsLoaded && sessions.length === 0 && socket) {
       bootstrapped.current = true;
-      void api.createSession().catch(() => setEmptyVisible(true));
+      void api.createSession().catch((err: unknown) => {
+        console.error(err);
+        setBootError(err instanceof Error ? err.message : String(err));
+        setEmptyVisible(true);
+      });
     }
-  }, [sessions, socket]);
+  }, [sessions, sessionsLoaded, socket]);
 
   useEffect(() => {
     const count = sessions.length;
@@ -191,7 +198,7 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey)) return;
+      if (!e.metaKey) return;
       if (e.key >= '1' && e.key <= '9') {
         const idx = Number(e.key) - 1;
         const s = sessionsRef.current[idx];
@@ -212,8 +219,14 @@ export default function App() {
   const width = config?.sidebar_width ?? 240;
 
   const onResizeWidth = useMemo(
-    () => async (w: number) => {
+    () => (w: number) => {
       setConfig((c) => (c ? { ...c, sidebar_width: w } : c));
+    },
+    [],
+  );
+
+  const onResizeWidthCommit = useMemo(
+    () => async (w: number) => {
       try {
         const next = await api.patchConfig({ sidebar_width: w });
         setConfig(next);
@@ -227,7 +240,8 @@ export default function App() {
   if (emptyVisible && sessions.length === 0) {
     return (
       <div className="empty">
-        <h1>すべてのタブを閉じました</h1>
+        <h1>{bootError ? 'タブを作成できませんでした' : 'すべてのタブを閉じました'}</h1>
+        {bootError && <p>{bootError}</p>}
         <button type="button" onClick={() => void createTab()}>
           ＋ 新規タブ
         </button>
@@ -248,7 +262,8 @@ export default function App() {
         onDuplicate={(id) => void api.duplicateSession(id).then((s) => setActiveId(s.id))}
         onRestart={(id) => void api.restartSession(id).then((s) => setActiveId(s.id))}
         onClose={(id) => void closeTab(id)}
-        onResizeWidth={(w) => void onResizeWidth(w)}
+        onResizeWidth={onResizeWidth}
+        onResizeWidthCommit={(w) => void onResizeWidthCommit(w)}
       />
       <main className="main">
         <TerminalView

@@ -28,6 +28,7 @@ type Props = {
   onRestart: (id: string) => void;
   onClose: (id: string) => void;
   onResizeWidth: (w: number) => void;
+  onResizeWidthCommit: (w: number) => void;
 };
 
 function SortableTab({
@@ -142,13 +143,16 @@ export function Sidebar(props: Props) {
           e.preventDefault();
           const startX = e.clientX;
           const startW = props.width;
+          let currentW = startW;
           const onMove = (ev: MouseEvent) => {
             const w = Math.min(480, Math.max(160, startW + (ev.clientX - startX)));
+            currentW = w;
             props.onResizeWidth(w);
           };
           const onUp = () => {
             window.removeEventListener('mousemove', onMove);
             window.removeEventListener('mouseup', onUp);
+            props.onResizeWidthCommit(currentW);
           };
           window.addEventListener('mousemove', onMove);
           window.addEventListener('mouseup', onUp);

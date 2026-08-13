@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -21,11 +22,15 @@ func Handler() http.Handler {
 	}
 	fileServer := http.FileServer(http.FS(sub))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		path := strings.TrimPrefix(r.URL.Path, "/")
-		if path == "" {
-			path = "index.html"
+		requestPath := strings.TrimPrefix(r.URL.Path, "/")
+		if requestPath == "" {
+			requestPath = "index.html"
 		}
-		if _, err := fs.Stat(sub, path); err != nil {
+		if _, err := fs.Stat(sub, requestPath); err != nil {
+			if path.Ext(requestPath) != "" {
+				http.NotFound(w, r)
+				return
+			}
 			// SPA fallback
 			r.URL.Path = "/"
 			fileServer.ServeHTTP(w, r)

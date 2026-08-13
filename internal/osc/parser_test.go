@@ -20,3 +20,15 @@ func TestParseCWDAndCmd(t *testing.T) {
 		t.Fatalf("cmd: %#v", evs[1])
 	}
 }
+
+func TestParseCWDDecodesFileURLOnce(t *testing.T) {
+	var p osc.Parser
+	evs := p.Feed([]byte("\x1b]7;file:///tmp/a%2520b\x1b\\"))
+
+	if len(evs) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(evs))
+	}
+	if evs[0].CWD != "/tmp/a%20b" {
+		t.Fatalf("cwd = %q, want %q", evs[0].CWD, "/tmp/a%20b")
+	}
+}

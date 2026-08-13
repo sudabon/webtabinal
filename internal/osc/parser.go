@@ -37,7 +37,7 @@ func (p *Parser) Feed(data []byte) []Event {
 		start := indexOSC(p.buf)
 		if start < 0 {
 			if len(p.buf) > 8192 {
-				p.buf = p.buf[len(p.buf)-4096:]
+				p.buf = append([]byte(nil), p.buf[len(p.buf)-4096:]...)
 			}
 			return events
 		}
@@ -46,6 +46,9 @@ func (p *Parser) Feed(data []byte) []Event {
 		}
 		end := indexOSCEnd(p.buf)
 		if end < 0 {
+			if len(p.buf) > 8192 {
+				p.buf = nil
+			}
 			return events
 		}
 		payload := string(p.buf[2:end]) // after ESC ]
@@ -148,9 +151,5 @@ func parseFileURL(raw string) string {
 		}
 		return ""
 	}
-	path, err := url.PathUnescape(u.Path)
-	if err != nil {
-		return u.Path
-	}
-	return path
+	return u.Path
 }

@@ -1,8 +1,10 @@
 package session
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -32,30 +34,33 @@ type Session struct {
 	State      State
 	ExitCode   *int
 	RunStarted time.Time
+	LastRunMs  int64
 	Ring       *RingBuffer
 	Integrated bool
 	Cols       uint16
 	Rows       uint16
 
-	mu      sync.Mutex
-	pty     *os.File
-	cmd     *exec.Cmd
-	parser  osc.Parser
-	onEvent func(*Session, osc.Event)
-	onExit  func(*Session)
+	mu       sync.Mutex
+	pty      *os.File
+	cmd      *exec.Cmd
+	parser   osc.Parser
+	onEvent  func(*Session, osc.Event)
+	onExit   func(*Session)
 	onOutput func(*Session, []byte)
-	closed  bool
+	logger   *log.Logger
+	done     chan struct{}
+	closed   bool
 }
 
 type Info struct {
-	ID         string  `json:"id"`
-	Order      int     `json:"order"`
-	Cwd        string  `json:"cwd"`
-	Command    string  `json:"command"`
-	State      State   `json:"state"`
-	ExitCode   *int    `json:"exit"`
-	Integrated bool    `json:"integrated"`
-	RunMs      int64   `json:"run_ms,omitempty"`
+	ID         string `json:"id"`
+	Order      int    `json:"order"`
+	Cwd        string `json:"cwd"`
+	Command    string `json:"command"`
+	State      State  `json:"state"`
+	ExitCode   *int   `json:"exit"`
+	Integrated bool   `json:"integrated"`
+	RunMs      int64  `json:"run_ms,omitempty"`
 }
 
 func (s *Session) Info() Info {
@@ -69,6 +74,7 @@ func (s *Session) Info() Info {
 		State:      s.State,
 		ExitCode:   s.ExitCode,
 		Integrated: s.Integrated,
+		RunMs:      s.LastRunMs,
 	}
 	if s.State == StateRunning && !s.RunStarted.IsZero() {
 		info.RunMs = time.Since(s.RunStarted).Milliseconds()
@@ -85,6 +91,7 @@ type CreateOpts struct {
 	OnEvent         func(*Session, osc.Event)
 	OnExit          func(*Session)
 	OnOutput        func(*Session, []byte)
+	Logger          *log.Logger
 }
 
 func Create(opts CreateOpts) (*Session, error) {
@@ -131,6 +138,8 @@ func Create(opts CreateOpts) (*Session, error) {
 		onEvent:  opts.OnEvent,
 		onExit:   opts.OnExit,
 		onOutput: opts.OnOutput,
+		logger:   opts.Logger,
+		done:     make(chan struct{}),
 	}
 
 	go s.readLoop()
@@ -158,8 +167,8 @@ func (s *Session) readLoop() {
 			}
 		}
 		if err != nil {
-			if err != io.EOF {
-				// treat as exit path
+			if !errors.Is(err, io.EOF) && s.logger != nil {
+				s.logger.Printf("session %s pty read: %v", s.ID, err)
 			}
 			return
 		}
@@ -180,6 +189,7 @@ func (s *Session) waitLoop() {
 	s.State = StateExited
 	s.ExitCode = &code
 	s.mu.Unlock()
+	close(s.done)
 	if s.onExit != nil {
 		s.onExit(s)
 	}
@@ -188,6 +198,9 @@ func (s *Session) waitLoop() {
 func (s *Session) applyEvent(ev osc.Event) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.State == StateExited {
+		return
+	}
 	switch ev.Kind {
 	case osc.EventCWD:
 		s.Cwd = ev.CWD
@@ -203,6 +216,9 @@ func (s *Session) applyEvent(ev osc.Event) {
 		s.RunStarted = time.Now()
 		s.ExitCode = nil
 	case osc.EventCmdEnd:
+		if s.State == StateRunning && !s.RunStarted.IsZero() {
+			s.LastRunMs = time.Since(s.RunStarted).Milliseconds()
+		}
 		s.State = StateIdle
 		s.ExitCode = ev.ExitCode
 	case osc.EventPrompt:
@@ -210,6 +226,9 @@ func (s *Session) applyEvent(ev osc.Event) {
 			s.State = StateIdle
 		}
 		if s.State == StateRunning {
+			if !s.RunStarted.IsZero() {
+				s.LastRunMs = time.Since(s.RunStarted).Milliseconds()
+			}
 			s.State = StateIdle
 		}
 	}
@@ -244,14 +263,17 @@ func (s *Session) SetFallbackState(running bool, cmdName string) {
 		return
 	}
 	if running {
+		if s.State != StateRunning {
+			s.RunStarted = time.Now()
+		}
 		s.State = StateRunning
 		if cmdName != "" {
 			s.Command = cmdName
 		}
-		if s.RunStarted.IsZero() {
-			s.RunStarted = time.Now()
-		}
 	} else {
+		if s.State == StateRunning && !s.RunStarted.IsZero() {
+			s.LastRunMs = time.Since(s.RunStarted).Milliseconds()
+		}
 		s.State = StateIdle
 	}
 }
@@ -269,22 +291,10 @@ func (s *Session) Close() error {
 
 	if cmd != nil && cmd.Process != nil {
 		_ = cmd.Process.Signal(syscall.SIGHUP)
-		deadline := time.After(3 * time.Second)
-	waitClose:
-		for {
-			select {
-			case <-deadline:
-				_ = cmd.Process.Kill()
-				break waitClose
-			case <-time.After(50 * time.Millisecond):
-				if cmd.ProcessState != nil && cmd.ProcessState.Exited() {
-					break waitClose
-				}
-				// best-effort: if already reaped by waitLoop, ProcessState may be set
-				if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
-					break waitClose
-				}
-			}
+		select {
+		case <-s.done:
+		case <-time.After(3 * time.Second):
+			_ = cmd.Process.Kill()
 		}
 	}
 	if ptmx != nil {

@@ -1,12 +1,16 @@
 package server
 
 import (
+	"context"
+	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"log"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/sudabon/webtabinal/internal/config"
 	"github.com/sudabon/webtabinal/internal/paths"
@@ -15,14 +19,15 @@ import (
 const cookieName = "webtabinal_token"
 
 type Server struct {
-	cfg    *config.Store
-	logger *log.Logger
-	mux    *http.ServeMux
-	hub    *Hub
+	cfg       *config.Store
+	logger    *log.Logger
+	mux       *http.ServeMux
+	hub       *Hub
+	boundPort int
 }
 
 func New(cfg *config.Store, logger *log.Logger, hub *Hub, static http.Handler) *Server {
-	s := &Server{cfg: cfg, logger: logger, mux: http.NewServeMux(), hub: hub}
+	s := &Server{cfg: cfg, logger: logger, mux: http.NewServeMux(), hub: hub, boundPort: cfg.Get().Port}
 	s.routes(static)
 	return s
 }
@@ -32,14 +37,49 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) ListenAndServe() error {
-	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(s.cfg.Get().Port))
+	return s.Run(context.Background())
+}
+
+func (s *Server) Run(ctx context.Context) error {
+	s.boundPort = s.cfg.Get().Port
+	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(s.boundPort))
 	s.logger.Printf("listening on http://%s", addr)
-	return http.ListenAndServe(addr, s.Handler())
+	httpServer := &http.Server{
+		Addr:              addr,
+		Handler:           s.Handler(),
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	result := make(chan error, 1)
+	go func() {
+		result <- httpServer.ListenAndServe()
+	}()
+	select {
+	case err := <-result:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case <-ctx.Done():
+		shutdownErr := httpServer.Shutdown(context.Background())
+		err := <-result
+		if shutdownErr != nil {
+			return shutdownErr
+		}
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	}
 }
 
 func (s *Server) withSecurity(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		port := strconv.Itoa(s.cfg.Get().Port)
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'; style-src 'self' 'unsafe-inline'")
+
+		port := strconv.Itoa(s.boundPort)
 		hostOK := r.Host == "127.0.0.1:"+port || r.Host == "localhost:"+port
 		if !hostOK {
 			http.Error(w, "forbidden host", http.StatusForbidden)
@@ -80,12 +120,12 @@ func (s *Server) setAuthCookie(w http.ResponseWriter) {
 }
 
 func (s *Server) validToken(r *http.Request) bool {
-	if c, err := r.Cookie(cookieName); err == nil && c.Value == s.cfg.AuthToken() {
+	if c, err := r.Cookie(cookieName); err == nil && subtle.ConstantTimeCompare([]byte(c.Value), []byte(s.cfg.AuthToken())) == 1 {
 		return true
 	}
 	auth := r.Header.Get("Authorization")
 	if strings.HasPrefix(auth, "Bearer ") {
-		return strings.TrimPrefix(auth, "Bearer ") == s.cfg.AuthToken()
+		return subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(auth, "Bearer ")), []byte(s.cfg.AuthToken())) == 1
 	}
 	return false
 }

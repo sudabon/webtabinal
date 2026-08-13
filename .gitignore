@@ -2,7 +2,8 @@
 bin/
 web/dist/
 web/node_modules/
-internal/static/dist/
+internal/static/dist/*
+!internal/static/dist/index.html
 
 # Log Files
 *.log

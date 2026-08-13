@@ -1,6 +1,8 @@
 package launchd
 
 import (
+	"bytes"
+	"encoding/xml"
 	"fmt"
 	"os"
 	"os/exec"
@@ -28,7 +30,7 @@ func WritePlist(binPath string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	logPath, err := paths.LogPath()
+	logPath, err := paths.StdioLogPath()
 	if err != nil {
 		return err
 	}
@@ -53,8 +55,14 @@ func WritePlist(binPath string) error {
   <string>%s</string>
 </dict>
 </plist>
-`, Label, binPath, logPath, logPath)
+`, xmlEscape(Label), xmlEscape(binPath), xmlEscape(logPath), xmlEscape(logPath))
 	return os.WriteFile(path, []byte(content), 0o644)
+}
+
+func xmlEscape(s string) string {
+	var b bytes.Buffer
+	_ = xml.EscapeText(&b, []byte(s))
+	return b.String()
 }
 
 func Install(binPath string) error {
@@ -62,8 +70,12 @@ func Install(binPath string) error {
 		return err
 	}
 	path, _ := PlistPath()
-	_ = exec.Command("launchctl", "unload", path).Run()
-	return exec.Command("launchctl", "load", path).Run()
+	_, _ = exec.Command("launchctl", "unload", path).CombinedOutput()
+	out, err := exec.Command("launchctl", "load", path).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("launchctl load: %w: %s", err, out)
+	}
+	return nil
 }
 
 func Uninstall() error {
@@ -71,7 +83,10 @@ func Uninstall() error {
 	if err != nil {
 		return err
 	}
-	_ = exec.Command("launchctl", "unload", path).Run()
+	out, err := exec.Command("launchctl", "unload", path).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("launchctl unload: %w: %s", err, out)
+	}
 	return os.Remove(path)
 }
 

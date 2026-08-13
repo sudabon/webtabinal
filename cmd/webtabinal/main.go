@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
+	"syscall"
 
 	"github.com/sudabon/webtabinal/internal/config"
 	"github.com/sudabon/webtabinal/internal/integration"
@@ -33,7 +36,9 @@ func main() {
 		if err != nil {
 			fatal(err)
 		}
-		bin, _ = filepath.EvalSymlinks(bin)
+		if resolved, err := filepath.EvalSymlinks(bin); err == nil {
+			bin = resolved
+		}
 		if err := launchd.Install(bin); err != nil {
 			fatal(err)
 		}
@@ -76,6 +81,9 @@ func main() {
 }
 
 func runServe() error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	logger, err := logging.Setup()
 	if err != nil {
 		return err
@@ -89,12 +97,12 @@ func runServe() error {
 	}
 	logger.Printf("integration written; add to .zshrc:\n  %s", integration.ZshrcSnippet())
 
-	mgr := session.NewManager(cfg)
+	mgr := session.NewManager(cfg, logger)
 	defer mgr.Close()
 
 	hub := server.NewHub(mgr, cfg, logger)
 	srv := server.New(cfg, logger, hub, static.Handler())
-	return srv.ListenAndServe()
+	return srv.Run(ctx)
 }
 
 func usage() {

@@ -1,5 +1,14 @@
 import type { ServerMsg } from './types';
 
+function encodeB64(bytes: Uint8Array): string {
+  let bin = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(bin);
+}
+
 type Handlers = {
   onMessage: (msg: ServerMsg) => void;
   onStatus?: (connected: boolean) => void;
@@ -11,6 +20,8 @@ export class TerminalSocket {
   private closed = false;
   private attempt = 0;
   private timer: number | null = null;
+  private attached: string | null = null;
+  private lastSize: { cols: number; rows: number } | null = null;
 
   constructor(handlers: Handlers) {
     this.handlers = handlers;
@@ -29,6 +40,12 @@ export class TerminalSocket {
     ws.onopen = () => {
       this.attempt = 0;
       this.handlers.onStatus?.(true);
+      if (this.attached) {
+        this.send({ t: 'attach', sid: this.attached });
+        if (this.lastSize) {
+          this.send({ t: 'resize', sid: this.attached, ...this.lastSize });
+        }
+      }
     };
     ws.onmessage = (ev) => {
       try {
@@ -61,14 +78,16 @@ export class TerminalSocket {
   }
 
   attach(sid: string) {
+    this.attached = sid;
     this.send({ t: 'attach', sid });
   }
 
   input(sid: string, data: string) {
-    this.send({ t: 'input', sid, data: btoa(data) });
+    this.send({ t: 'input', sid, data: encodeB64(new TextEncoder().encode(data)) });
   }
 
   resize(sid: string, cols: number, rows: number) {
+    this.lastSize = { cols, rows };
     this.send({ t: 'resize', sid, cols, rows });
   }
 
@@ -79,10 +98,10 @@ export class TerminalSocket {
   }
 }
 
-export function decodeB64(data: string): string {
-  if (!data) return '';
+export function decodeB64Bytes(data: string): Uint8Array {
+  if (!data) return new Uint8Array();
   const bin = atob(data);
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return new TextDecoder().decode(bytes);
+  return bytes;
 }

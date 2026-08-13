@@ -31,6 +31,7 @@ func (w *rotatingWriter) Write(p []byte) (int, error) {
 	}
 	if w.written+int64(len(p)) > w.maxBytes {
 		_ = w.file.Close()
+		w.file = nil
 		rotated := w.path + ".1"
 		_ = os.Remove(rotated)
 		_ = os.Rename(w.path, rotated)

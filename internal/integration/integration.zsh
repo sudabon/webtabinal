@@ -7,8 +7,9 @@ __webtabinal_osc() {
 }
 
 __webtabinal_cwd() {
-  local encoded
-  encoded=$(python3 -c 'import os,urllib.parse; print(urllib.parse.quote(os.getcwd(), safe="/"))' 2>/dev/null) || encoded="${PWD}"
+  emulate -L zsh -o extendedglob
+  local LC_ALL=C
+  local encoded="${PWD//(#m)[^a-zA-Z0-9._~\/-]/%${(l:2::0:)$(([##16]#MATCH))}}"
   __webtabinal_osc "7;file://${encoded}"
 }
 

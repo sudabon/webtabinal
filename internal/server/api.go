@@ -2,6 +2,8 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 )
 
@@ -13,7 +15,10 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Cwd string `json:"cwd"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	sess, err := s.hub.manager.Create(body.Cwd)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

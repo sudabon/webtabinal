@@ -2,6 +2,7 @@ package session
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"strconv"
@@ -20,6 +21,7 @@ type Manager struct {
 	sessions map[string]*Session
 	order    []string
 	cfg      *config.Store
+	logger   *log.Logger
 	onChange func()
 	onOutput func(*Session, []byte)
 	onEvent  func(*Session, osc.Event)
@@ -27,10 +29,11 @@ type Manager struct {
 	stopFB   chan struct{}
 }
 
-func NewManager(cfg *config.Store) *Manager {
+func NewManager(cfg *config.Store, logger *log.Logger) *Manager {
 	m := &Manager{
 		sessions: make(map[string]*Session),
 		cfg:      cfg,
+		logger:   logger,
 		stopFB:   make(chan struct{}),
 	}
 	go m.fallbackLoop()
@@ -44,6 +47,12 @@ func (m *Manager) SetHooks(onChange func(), onOutput func(*Session, []byte), onE
 	m.onOutput = onOutput
 	m.onEvent = onEvent
 	m.onExit = onExit
+}
+
+func (m *Manager) hooks() (func(), func(*Session, []byte), func(*Session, osc.Event), func(*Session)) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.onChange, m.onOutput, m.onEvent, m.onExit
 }
 
 func (m *Manager) Close() {
@@ -87,17 +96,20 @@ func (m *Manager) Create(cwd string) (*Session, error) {
 		Shell:           cfg.Shell,
 		Cwd:             cwd,
 		RingBufferBytes: cfg.RingBufferBytes,
+		Logger:          m.logger,
 		OnEvent: func(sess *Session, ev osc.Event) {
-			if m.onEvent != nil {
-				m.onEvent(sess, ev)
+			_, _, onEvent, _ := m.hooks()
+			if onEvent != nil {
+				onEvent(sess, ev)
 			}
 		},
 		OnExit: func(sess *Session) {
 			m.handleExit(sess)
 		},
 		OnOutput: func(sess *Session, data []byte) {
-			if m.onOutput != nil {
-				m.onOutput(sess, data)
+			_, onOutput, _, _ := m.hooks()
+			if onOutput != nil {
+				onOutput(sess, data)
 			}
 		},
 	})
@@ -106,9 +118,9 @@ func (m *Manager) Create(cwd string) (*Session, error) {
 	}
 
 	m.mu.Lock()
-	s.Order = len(m.order)
 	m.sessions[s.ID] = s
 	m.order = append(m.order, s.ID)
+	m.reindexLocked()
 	onChange := m.onChange
 	m.mu.Unlock()
 	if onChange != nil {
@@ -137,6 +149,10 @@ func (m *Manager) Restart(id string) (*Session, error) {
 	}
 	order := info.Order
 	cwd := info.Cwd
+	ns, err := m.Create(cwd)
+	if err != nil {
+		return nil, err
+	}
 	_ = s.Close()
 
 	m.mu.Lock()
@@ -149,10 +165,6 @@ func (m *Manager) Restart(id string) (*Session, error) {
 	}
 	m.mu.Unlock()
 
-	ns, err := m.Create(cwd)
-	if err != nil {
-		return nil, err
-	}
 	m.mu.Lock()
 	// move new session to old order position
 	newOrder := make([]string, 0, len(m.order))
@@ -205,16 +217,18 @@ func (m *Manager) Delete(id string) error {
 
 func (m *Manager) Reorder(ids []string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if len(ids) != len(m.order) {
+		m.mu.Unlock()
 		return fmt.Errorf("id count mismatch")
 	}
 	seen := map[string]bool{}
 	for _, id := range ids {
 		if _, ok := m.sessions[id]; !ok {
+			m.mu.Unlock()
 			return fmt.Errorf("unknown session %s", id)
 		}
 		if seen[id] {
+			m.mu.Unlock()
 			return fmt.Errorf("duplicate id")
 		}
 		seen[id] = true
@@ -222,8 +236,9 @@ func (m *Manager) Reorder(ids []string) error {
 	m.order = append([]string(nil), ids...)
 	m.reindexLocked()
 	onChange := m.onChange
+	m.mu.Unlock()
 	if onChange != nil {
-		go onChange()
+		onChange()
 	}
 	return nil
 }
@@ -245,11 +260,12 @@ func (m *Manager) handleExit(s *Session) {
 		_ = m.Delete(s.ID)
 		return
 	}
-	if m.onExit != nil {
-		m.onExit(s)
+	onChange, _, _, onExit := m.hooks()
+	if onExit != nil {
+		onExit(s)
 	}
-	if m.onChange != nil {
-		m.onChange()
+	if onChange != nil {
+		onChange()
 	}
 }
 
@@ -273,6 +289,7 @@ func (m *Manager) pollFallback() {
 		list = append(list, s)
 	}
 	m.mu.RUnlock()
+	onChange, _, onEvent, _ := m.hooks()
 
 	changed := false
 	for _, s := range list {
@@ -286,13 +303,13 @@ func (m *Manager) pollFallback() {
 		after := s.Info().State
 		if before != after {
 			changed = true
-			if m.onEvent != nil {
-				m.onEvent(s, osc.Event{})
+			if onEvent != nil {
+				onEvent(s, osc.Event{})
 			}
 		}
 	}
-	if changed && m.onChange != nil {
-		m.onChange()
+	if changed && onChange != nil {
+		onChange()
 	}
 }
 
@@ -301,16 +318,22 @@ func foregroundInfo(s *Session) (bool, string) {
 	if ptmx == nil {
 		return false, ""
 	}
-	var fg int
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, ptmx.Fd(), uintptr(syscall.TIOCGPGRP), uintptr(unsafe.Pointer(&fg)))
-	if errno != 0 || fg <= 0 {
+	rc, err := ptmx.SyscallConn()
+	if err != nil {
+		return false, ""
+	}
+	var fg int32
+	var errno syscall.Errno
+	if err := rc.Control(func(fd uintptr) {
+		_, _, errno = syscall.Syscall(syscall.SYS_IOCTL, fd, uintptr(syscall.TIOCGPGRP), uintptr(unsafe.Pointer(&fg)))
+	}); err != nil || errno != 0 || fg <= 0 {
 		return false, ""
 	}
 	shellPID := s.CmdProcessPID()
-	if shellPID == 0 || fg == shellPID {
+	if shellPID == 0 || int(fg) == shellPID {
 		return false, ""
 	}
-	out, err := exec.Command("ps", "-o", "comm=", "-p", strconv.Itoa(fg)).Output()
+	out, err := exec.Command("ps", "-o", "comm=", "-p", strconv.Itoa(int(fg))).Output()
 	if err != nil {
 		return true, ""
 	}

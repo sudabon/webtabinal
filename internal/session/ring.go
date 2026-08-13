@@ -5,49 +5,58 @@ import "sync"
 type RingBuffer struct {
 	mu   sync.Mutex
 	buf  []byte
-	size int
 	max  int
+	w    int
+	full bool
 }
 
 func NewRingBuffer(max int) *RingBuffer {
 	if max <= 0 {
 		max = 5 * 1024 * 1024
 	}
-	return &RingBuffer{max: max}
+	return &RingBuffer{buf: make([]byte, max), max: max}
 }
 
 func (r *RingBuffer) Write(p []byte) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if len(p) >= r.max {
-		r.buf = append([]byte(nil), p[len(p)-r.max:]...)
-		r.size = len(r.buf)
+	if len(p) == 0 {
 		return
 	}
-	need := r.size + len(p) - r.max
-	if need > 0 {
-		if need >= r.size {
-			r.buf = nil
-			r.size = 0
-		} else {
-			r.buf = append([]byte(nil), r.buf[need:]...)
-			r.size = len(r.buf)
-		}
+	if len(p) >= r.max {
+		copy(r.buf, p[len(p)-r.max:])
+		r.w = 0
+		r.full = true
+		return
 	}
-	r.buf = append(r.buf, p...)
-	r.size = len(r.buf)
+	end := r.w + len(p)
+	if end >= r.max {
+		r.full = true
+	}
+	n := copy(r.buf[r.w:], p)
+	copy(r.buf, p[n:])
+	r.w = end % r.max
 }
 
 func (r *RingBuffer) Bytes() []byte {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	out := make([]byte, len(r.buf))
-	copy(out, r.buf)
+	if !r.full {
+		out := make([]byte, r.w)
+		copy(out, r.buf[:r.w])
+		return out
+	}
+	out := make([]byte, r.max)
+	n := copy(out, r.buf[r.w:])
+	copy(out[n:], r.buf[:r.w])
 	return out
 }
 
 func (r *RingBuffer) Len() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.size
+	if r.full {
+		return r.max
+	}
+	return r.w
 }

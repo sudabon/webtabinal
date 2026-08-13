@@ -6,7 +6,7 @@ import { SearchAddon } from '@xterm/addon-search';
 import { WebglAddon } from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
 import type { AppConfig } from '../types';
-import { decodeB64, TerminalSocket } from '../ws';
+import { decodeB64Bytes, TerminalSocket } from '../ws';
 
 type Props = {
   sessionId: string | null;
@@ -22,6 +22,8 @@ export function TerminalView({ sessionId, socket, config, copyOnSelect }: Props)
   const attachedRef = useRef<string | null>(null);
   const socketRef = useRef(socket);
   socketRef.current = socket;
+  const copyOnSelectRef = useRef(copyOnSelect);
+  copyOnSelectRef.current = copyOnSelect;
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -60,7 +62,7 @@ export function TerminalView({ sessionId, socket, config, copyOnSelect }: Props)
     });
 
     const onSel = term.onSelectionChange(() => {
-      if (!copyOnSelect) return;
+      if (!copyOnSelectRef.current) return;
       const sel = term.getSelection();
       if (sel) void navigator.clipboard.writeText(sel);
     });
@@ -110,11 +112,12 @@ export function TerminalView({ sessionId, socket, config, copyOnSelect }: Props)
       const term = termRef.current;
       if (!term || !attachedRef.current) return;
       if (msg.t === 'replay' && msg.sid === attachedRef.current) {
-        const text = decodeB64(msg.data);
-        if (text) term.write(text);
+        const bytes = decodeB64Bytes(msg.data);
+        if (bytes.length > 0) term.write(bytes);
       }
       if (msg.t === 'output' && msg.sid === attachedRef.current) {
-        term.write(decodeB64(msg.data));
+        const bytes = decodeB64Bytes(msg.data);
+        if (bytes.length > 0) term.write(bytes);
       }
     };
     // monkey-patch: App will also route; expose via custom event

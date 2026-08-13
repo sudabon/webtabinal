@@ -52,6 +52,14 @@ func LogPath() (string, error) {
 	return filepath.Join(dir, "daemon.log"), nil
 }
 
+func StdioLogPath() (string, error) {
+	dir, err := LogsDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "daemon.stdio.log"), nil
+}
+
 func EnsureDir(path string) error {
 	return os.MkdirAll(path, 0o755)
 }

@@ -5,7 +5,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/sudabon/webtabinal/internal/paths"
@@ -155,29 +157,24 @@ func (s *Store) Patch(patch map[string]any) (Config, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	raw, err := json.Marshal(s.cfg)
-	if err != nil {
-		return Config{}, err
-	}
-	var merged map[string]any
-	if err := json.Unmarshal(raw, &merged); err != nil {
-		return Config{}, err
-	}
-	for k, v := range patch {
-		if k == "auth_token" {
-			continue
+	cleanPatch := make(map[string]any, len(patch))
+	for key, value := range patch {
+		if key != "auth_token" {
+			cleanPatch[key] = value
 		}
-		merged[k] = v
 	}
-	updated, err := json.Marshal(merged)
+	updated, err := json.Marshal(cleanPatch)
 	if err != nil {
 		return Config{}, err
 	}
-	var next Config
+	next := s.cfg
 	if err := json.Unmarshal(updated, &next); err != nil {
 		return Config{}, err
 	}
 	next.AuthToken = s.cfg.AuthToken
+	if err := validate(next); err != nil {
+		return Config{}, err
+	}
 	s.cfg = next
 	s.applyDefaults()
 	if err := s.saveLocked(); err != nil {
@@ -186,6 +183,38 @@ func (s *Store) Patch(patch map[string]any) (Config, error) {
 	out := s.cfg
 	out.AuthToken = ""
 	return out, nil
+}
+
+func validate(cfg Config) error {
+	if !filepath.IsAbs(cfg.Shell) {
+		return fmt.Errorf("shell must be an absolute path")
+	}
+	info, err := os.Stat(cfg.Shell)
+	if err != nil {
+		return fmt.Errorf("shell: %w", err)
+	}
+	if info.Mode()&0o111 == 0 {
+		return fmt.Errorf("shell is not executable")
+	}
+	if cfg.Port < 1 || cfg.Port > 65535 {
+		return fmt.Errorf("port must be between 1 and 65535")
+	}
+	if cfg.RingBufferBytes <= 0 {
+		return fmt.Errorf("ring_buffer_bytes must be positive")
+	}
+	if cfg.ScrollbackLines <= 0 {
+		return fmt.Errorf("scrollback_lines must be positive")
+	}
+	if cfg.FontSize <= 0 {
+		return fmt.Errorf("font_size must be positive")
+	}
+	if cfg.SidebarWidth <= 0 {
+		return fmt.Errorf("sidebar_width must be positive")
+	}
+	if cfg.Notification.MinDurationMs < 0 {
+		return fmt.Errorf("notification.min_duration_ms must be non-negative")
+	}
+	return nil
 }
 
 func (s *Store) saveLocked() error {
