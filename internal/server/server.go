@@ -5,18 +5,23 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/sudabon/webtabinal/internal/config"
 	"github.com/sudabon/webtabinal/internal/paths"
 )
 
-const cookieName = "webtabinal_token"
+const (
+	cookieName            = "webtabinal_token"
+	contentSecurityPolicy = "default-src 'self'; frame-ancestors 'none'; style-src 'self' 'unsafe-inline'"
+)
 
 var ErrAlreadyRunning = errors.New("webtabinal is already listening")
 
@@ -45,19 +50,25 @@ func (s *Server) ListenAndServe() error {
 // LoopbackListening reports whether WebTabinal is already serving on 127.0.0.1:port.
 func LoopbackListening(port int) bool {
 	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
-	conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
-	if err != nil {
-		return false
+	client := &http.Client{
+		Timeout: 300 * time.Millisecond,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
 	}
-	_ = conn.Close()
-
-	client := &http.Client{Timeout: 300 * time.Millisecond}
 	resp, err := client.Get("http://" + addr + "/api/config")
 	if err != nil {
 		return false
 	}
-	_ = resp.Body.Close()
-	return true
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized ||
+		resp.Header.Get("X-Frame-Options") != "DENY" ||
+		resp.Header.Get("X-Content-Type-Options") != "nosniff" ||
+		resp.Header.Get("Content-Security-Policy") != contentSecurityPolicy {
+		return false
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64))
+	return err == nil && string(body) == "unauthorized\n"
 }
 
 func (s *Server) Run(ctx context.Context) error {
@@ -80,10 +91,7 @@ func (s *Server) Run(ctx context.Context) error {
 	}()
 	select {
 	case err := <-result:
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
-		}
-		return err
+		return s.normalizeListenError(addr, err)
 	case <-ctx.Done():
 		shutdownErr := httpServer.Shutdown(context.Background())
 		err := <-result
@@ -97,11 +105,22 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 }
 
+func (s *Server) normalizeListenError(addr string, err error) error {
+	if errors.Is(err, http.ErrServerClosed) {
+		return nil
+	}
+	if errors.Is(err, syscall.EADDRINUSE) && LoopbackListening(s.boundPort) {
+		s.logger.Printf("already listening on http://%s after bind race; exiting successfully", addr)
+		return ErrAlreadyRunning
+	}
+	return err
+}
+
 func (s *Server) withSecurity(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'; style-src 'self' 'unsafe-inline'")
+		w.Header().Set("Content-Security-Policy", contentSecurityPolicy)
 
 		port := strconv.Itoa(s.boundPort)
 		hostOK := r.Host == "127.0.0.1:"+port || r.Host == "localhost:"+port

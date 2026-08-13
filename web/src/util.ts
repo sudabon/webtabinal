@@ -21,3 +21,7 @@ export function isStandalone(): boolean {
   if (window.matchMedia('(display-mode: standalone)').matches) return true;
   return Boolean((window as Window & { __WEBTABINAL_DESKTOP__?: boolean }).__WEBTABINAL_DESKTOP__);
 }
+
+export function openExternalLink(uri: string): void {
+  window.open(uri, '_blank', 'noopener');
+}

@@ -7,6 +7,15 @@ CONTENTS="${APP_DIR}/Contents"
 MACOS="${CONTENTS}/MacOS"
 RESOURCES="${CONTENTS}/Resources"
 DESKTOP="${ROOT}/desktop"
+WEBTABINAL_ARCH="$(uname -m)"
+
+case "${WEBTABINAL_ARCH}" in
+  arm64|x86_64) ;;
+  *)
+    echo "unsupported macOS architecture: ${WEBTABINAL_ARCH}" >&2
+    exit 1
+    ;;
+esac
 
 if [[ ! -x "${ROOT}/bin/webtabinal" ]]; then
   echo "missing ${ROOT}/bin/webtabinal; run 'make build' first" >&2
@@ -19,10 +28,12 @@ mkdir -p "${MACOS}" "${RESOURCES}"
 
 echo "==> compiling native shell"
 swiftc \
+  -target "${WEBTABINAL_ARCH}-apple-macosx13.0" \
   -O \
   -framework AppKit \
   -framework WebKit \
   -o "${MACOS}/WebTabinal" \
+  "${DESKTOP}/Sources/DesktopSupport.swift" \
   "${DESKTOP}/Sources/main.swift"
 
 cp "${ROOT}/bin/webtabinal" "${MACOS}/webtabinal-daemon"

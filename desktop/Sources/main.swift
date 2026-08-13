@@ -7,12 +7,6 @@ private let defaultPort = 8642
 private let startupTimeout: TimeInterval = 15
 private let probeInterval: TimeInterval = 0.15
 
-private enum ConfigPortError: Error {
-    case readFailed(path: String, underlying: Error)
-    case parseFailed(path: String)
-    case invalidPort(path: String)
-}
-
 final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavigationDelegate, WKUIDelegate, NSWindowDelegate {
     private var window: NSWindow!
     private var webView: WKWebView!
@@ -40,7 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
         buildWindow()
 
-        if !isListening(port: port) {
+        if !webTabinalListening(port: port) {
             do {
                 try spawnDetachedDaemon()
             } catch {
@@ -108,7 +102,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
                 timer.invalidate()
                 return
             }
-            if self.isListening(port: self.port) {
+            if webTabinalListening(port: self.port) {
                 timer.invalidate()
                 self.showWindow()
                 let url = URL(string: "http://127.0.0.1:\(self.port)/")!
@@ -160,21 +154,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         } catch {
             throw ConfigPortError.readFailed(path: configURL.path, underlying: error)
         }
-        let json: [String: Any]
-        do {
-            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                throw ConfigPortError.parseFailed(path: configURL.path)
-            }
-            json = object
-        } catch let error as ConfigPortError {
-            throw error
-        } catch {
-            throw ConfigPortError.parseFailed(path: configURL.path)
-        }
-        guard let value = json["port"] as? Int, value > 0, value <= 65535 else {
-            throw ConfigPortError.invalidPort(path: configURL.path)
-        }
-        return value
+        return try configuredPort(from: data, path: configURL.path, defaultPort: defaultPort)
     }
 
     private func daemonLogPath() -> String {
@@ -198,37 +178,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             .appendingPathComponent("Contents/MacOS/webtabinal-daemon")
     }
 
-    private func isListening(port: Int) -> Bool {
-        var hints = addrinfo(
-            ai_flags: AI_NUMERICHOST,
-            ai_family: AF_INET,
-            ai_socktype: SOCK_STREAM,
-            ai_protocol: IPPROTO_TCP,
-            ai_addrlen: 0,
-            ai_canonname: nil,
-            ai_addr: nil,
-            ai_next: nil
-        )
-        var result: UnsafeMutablePointer<addrinfo>?
-        let host = "127.0.0.1"
-        let portStr = String(port)
-        guard getaddrinfo(host, portStr, &hints, &result) == 0, let info = result else {
-            return false
-        }
-        defer { freeaddrinfo(info) }
-
-        let fd = socket(info.pointee.ai_family, info.pointee.ai_socktype, info.pointee.ai_protocol)
-        guard fd >= 0 else { return false }
-        defer { close(fd) }
-
-        var timeout = timeval(tv_sec: 0, tv_usec: 200_000)
-        _ = setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
-        _ = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
-
-        let connected = connect(fd, info.pointee.ai_addr, info.pointee.ai_addrlen) == 0
-        return connected
-    }
-
     /// Spawns `webtabinal serve` in a new session so Force Quit of the app does not kill it.
     private func spawnDetachedDaemon() throws {
         let binary = sidecarBinaryURL().path
@@ -240,54 +189,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             )
         }
         let log = stdioLogPath()
-        // python3 start_new_session=True calls setsid(); the daemon outlives the .app.
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-        let script = """
-        import subprocess
-        log = open(\(pythonStringLiteral(log)), "a")
-        subprocess.Popen(
-            [\(pythonStringLiteral(binary)), "serve"],
-            stdin=subprocess.DEVNULL,
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-            close_fds=True,
-        )
-        """
-        process.arguments = ["-c", script]
-        try process.run()
-        process.waitUntilExit()
-        if process.terminationStatus != 0 {
-            let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-            let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-            var detail = String(data: stderrData, encoding: .utf8) ?? ""
-            if detail.isEmpty {
-                detail = String(data: stdoutData, encoding: .utf8) ?? ""
-            }
-            detail = detail.trimmingCharacters(in: .whitespacesAndNewlines)
-            var message = "Failed to spawn daemon (exit \(process.terminationStatus))"
-            if !detail.isEmpty {
-                message += ":\n\(detail)"
-            }
-            message += "\n\n\(logHint())"
-            throw NSError(
-                domain: "WebTabinal",
-                code: Int(process.terminationStatus),
-                userInfo: [NSLocalizedDescriptionKey: message]
-            )
-        }
-    }
-
-    private func pythonStringLiteral(_ value: String) -> String {
-        "\"" + value
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-            + "\""
+        try spawnDetachedProcess(executablePath: binary, arguments: ["serve"], logPath: log)
     }
 
     // MARK: - WKNavigationDelegate

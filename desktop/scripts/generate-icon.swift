@@ -1,6 +1,7 @@
 #!/usr/bin/env swift
 import AppKit
 import Foundation
+import ImageIO
 
 // Usage: generate-icon.swift <icon.svg> <out.icns>
 guard CommandLine.arguments.count >= 3 else {
@@ -16,14 +17,20 @@ guard let image = NSImage(contentsOf: svgURL), image.isValid else {
     exit(1)
 }
 
-let sizes: [Int] = [16, 32, 64, 128, 256, 512, 1024]
-let work = FileManager.default.temporaryDirectory
-    .appendingPathComponent("WebTabinalIcon-\(UUID().uuidString)")
-let iconset = work.appendingPathComponent("AppIcon.iconset")
-try FileManager.default.createDirectory(at: iconset, withIntermediateDirectories: true)
-defer { try? FileManager.default.removeItem(at: work) }
+let representations: [(pixels: Int, dpi: Int)] = [
+    (16, 72),
+    (32, 144),
+    (32, 72),
+    (64, 144),
+    (128, 72),
+    (256, 144),
+    (256, 72),
+    (512, 144),
+    (512, 72),
+    (1024, 144),
+]
 
-func writePNG(size: Int, name: String) throws {
+func renderIcon(size: Int) throws -> CGImage {
     let rect = NSRect(x: 0, y: 0, width: size, height: size)
     let rep = NSBitmapImageRep(
         bitmapDataPlanes: nil,
@@ -44,27 +51,35 @@ func writePNG(size: Int, name: String) throws {
     rect.fill()
     image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0)
     NSGraphicsContext.restoreGraphicsState()
-    guard let data = rep.representation(using: .png, properties: [:]) else {
-        throw NSError(domain: "WebTabinal", code: 1, userInfo: [NSLocalizedDescriptionKey: "PNG encode failed"])
+    guard let cgImage = rep.cgImage else {
+        throw NSError(domain: "WebTabinal", code: 1, userInfo: [NSLocalizedDescriptionKey: "icon render failed"])
     }
-    try data.write(to: iconset.appendingPathComponent(name))
+    return cgImage
 }
 
-for size in sizes {
-    try writePNG(size: size, name: "icon_\(size)x\(size).png")
-    if size <= 512 {
-        try writePNG(size: size * 2, name: "icon_\(size)x\(size)@2x.png")
-    }
+guard let destination = CGImageDestinationCreateWithURL(
+    icnsURL as CFURL,
+    "com.apple.icns" as CFString,
+    representations.count,
+    nil
+) else {
+    fputs("failed to create ICNS destination: \(icnsURL.path)\n", stderr)
+    exit(1)
 }
-
-let proc = Process()
-proc.executableURL = URL(fileURLWithPath: "/usr/bin/iconutil")
-proc.arguments = ["-c", "icns", iconset.path, "-o", icnsURL.path]
-try proc.run()
-proc.waitUntilExit()
-if proc.terminationStatus != 0 {
-    fputs("iconutil failed\n", stderr)
-    exit(Int32(proc.terminationStatus))
+for representation in representations {
+    let properties = [
+        kCGImagePropertyDPIWidth: representation.dpi,
+        kCGImagePropertyDPIHeight: representation.dpi,
+    ] as CFDictionary
+    CGImageDestinationAddImage(
+        destination,
+        try renderIcon(size: representation.pixels),
+        properties
+    )
+}
+guard CGImageDestinationFinalize(destination) else {
+    fputs("failed to write ICNS: \(icnsURL.path)\n", stderr)
+    exit(1)
 }
 
 print("wrote \(icnsURL.path)")
