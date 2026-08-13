@@ -1,4 +1,4 @@
-.PHONY: build web daemon serve desktop clean
+.PHONY: build web daemon serve desktop desktop-test clean
 
 build: web daemon
 
@@ -14,8 +14,11 @@ daemon:
 serve: build
 	./bin/webtabinal serve
 
-desktop: build
+desktop: build desktop-test
 	bash desktop/scripts/build-app.sh
+
+desktop-test:
+	bash desktop/scripts/run-tests.sh
 
 clean:
 	rm -rf bin web/dist internal/static/dist

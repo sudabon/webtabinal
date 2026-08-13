@@ -20,6 +20,7 @@ internal/static/dist/*
 .cursor/
 .claude/
 .codex/
+.codex-scratch/
 
 # Cursor
 .cursorrules

@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     private var webView: WKWebView!
     private var port = defaultPort
     private var logPath: String = ""
+    private var initialLoadFinished = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         logPath = daemonLogPath()
@@ -130,9 +131,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     }
 
     private func showLoadError(failedURL: String, error: Error) {
-        showStartupError(
-            "Failed to load \(failedURL):\n\(error.localizedDescription)\n\n\(logHint())"
-        )
+        let message = "Failed to load \(failedURL):\n\(error.localizedDescription)\n\n\(logHint())"
+        if initialLoadFinished {
+            let alert = NSAlert()
+            alert.messageText = "WebTabinal failed to load"
+            alert.informativeText = message
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            if let window {
+                alert.beginSheetModal(for: window)
+            } else {
+                alert.runModal()
+            }
+            return
+        }
+        showStartupError(message)
     }
 
     private func logHint() -> String {
@@ -194,6 +207,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     // MARK: - WKNavigationDelegate
 
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        initialLoadFinished = true
+    }
+
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         let failedURL = webView.url?.absoluteString ?? "http://127.0.0.1:\(port)/"
         showLoadError(failedURL: failedURL, error: error)
@@ -205,7 +222,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-        showStartupError("Web content process terminated unexpectedly.\n\n\(logHint())")
+        if !initialLoadFinished {
+            showStartupError("Web content process terminated unexpectedly.\n\n\(logHint())")
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "WebTabinal content process terminated"
+        alert.informativeText = "The web content process exited unexpectedly.\n\n\(logHint())"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Reload")
+        alert.addButton(withTitle: "OK")
+        guard let window else {
+            if alert.runModal() == .alertFirstButtonReturn {
+                webView.reload()
+            }
+            return
+        }
+        alert.beginSheetModal(for: window) { [weak self] response in
+            if response == .alertFirstButtonReturn {
+                self?.webView.reload()
+            }
+        }
     }
 
     // MARK: - WKUIDelegate

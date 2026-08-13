@@ -30,7 +30,7 @@ The binary SHALL expose CLI subcommands `serve`, `install`, `uninstall`, `status
 
 #### Scenario: Install registers LaunchAgent
 - **WHEN** the user runs `webtabinal install`
-- **THEN** a plist is written under `~/Library/LaunchAgents/` and loaded so the daemon starts at login and restarts on exit
+- **THEN** a plist is written under `~/Library/LaunchAgents/` and loaded so the daemon starts at login and restarts after an unsuccessful exit (`KeepAlive` with `SuccessfulExit` false). A successful exit (including idempotent “already listening”) does not trigger an automatic restart
 
 #### Scenario: Open launches the UI URL
 - **WHEN** the user runs `webtabinal open`
