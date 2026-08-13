@@ -92,6 +92,11 @@ func runServe() error {
 	if err != nil {
 		return err
 	}
+	port := cfg.Get().Port
+	if server.LoopbackListening(port) {
+		logger.Printf("already listening on http://127.0.0.1:%d; exiting successfully", port)
+		return nil
+	}
 	if err := integration.Write(); err != nil {
 		return err
 	}

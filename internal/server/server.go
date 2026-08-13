@@ -40,9 +40,24 @@ func (s *Server) ListenAndServe() error {
 	return s.Run(context.Background())
 }
 
+// LoopbackListening reports whether 127.0.0.1:port already accepts TCP connections.
+func LoopbackListening(port int) bool {
+	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
+
 func (s *Server) Run(ctx context.Context) error {
 	s.boundPort = s.cfg.Get().Port
 	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(s.boundPort))
+	if LoopbackListening(s.boundPort) {
+		s.logger.Printf("already listening on http://%s; exiting successfully", addr)
+		return nil
+	}
 	s.logger.Printf("listening on http://%s", addr)
 	httpServer := &http.Server{
 		Addr:              addr,

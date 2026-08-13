@@ -203,6 +203,53 @@ func TestInputWriteFailureIsLogged(t *testing.T) {
 	}
 }
 
+func TestRunExitsSuccessfullyWhenPortAlreadyListening(t *testing.T) {
+	store := testConfigStore(t)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	port := listener.Addr().(*net.TCPAddr).Port
+	if _, err := store.Patch(map[string]any{"port": port}); err != nil {
+		t.Fatal(err)
+	}
+
+	var logs bytes.Buffer
+	srv := New(store, log.New(&logs, "", 0), nil, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	err = srv.Run(ctx)
+	if err != nil {
+		t.Fatalf("Run = %v, want nil", err)
+	}
+	if !strings.Contains(logs.String(), "already listening") {
+		t.Fatalf("log = %q, want already listening message", logs.String())
+	}
+}
+
+func TestLoopbackListening(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	if !LoopbackListening(port) {
+		t.Fatal("expected listening port to report true")
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for LoopbackListening(port) {
+		if time.Now().After(deadline) {
+			t.Fatal("expected closed port to report false")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func TestRunStopsWhenContextIsCanceled(t *testing.T) {
 	store := testConfigStore(t)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

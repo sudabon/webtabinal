@@ -1,14 +1,4 @@
-# pwa-lifecycle Specification
-
-## Purpose
-TBD - created by archiving change lterm-v01. Update Purpose after archive.
-## Requirements
-### Requirement: Installable PWA package
-The app SHALL ship `manifest.webmanifest` with `display: standalone`, name/short_name, theme_color, and icons (192/512 including maskable), plus a minimal service worker for installability. Offline caching is not required for v0.1.
-
-#### Scenario: Manifest enables install
-- **WHEN** the user opens the app in a supporting browser
-- **THEN** the browser offers install / Add to Dock based on the provided manifest and service worker
+## MODIFIED Requirements
 
 ### Requirement: Quit when last tab closes in standalone
 When `quit_when_no_tabs` is true and the client is running as a desktop window (`matchMedia('(display-mode: standalone)').matches` or the native app WebView), and the sessions list transitions from 1 to 0 due to user close, the client SHALL call `window.close()`. If the page remains open, it SHALL show the empty state. In non-standalone browser tabs, closing the last session SHALL show empty state without closing the window. The daemon SHALL keep running (LaunchAgent and/or a process started by the native app). Closing the UI SHALL NOT stop the daemon.
@@ -28,11 +18,3 @@ When `quit_when_no_tabs` is true and the client is running as a desktop window (
 #### Scenario: Native window close leaves daemon up
 - **WHEN** the user closes the native app window
 - **THEN** the daemon keeps serving existing sessions for the next launch
-
-### Requirement: beforeunload when running sessions exist
-When at least one session is `running`, the client SHALL prompt on window close via `beforeunload` unless the corresponding confirm setting disables it. This SHALL not conflict with quit-on-last-tab because that path has zero sessions at quit time.
-
-#### Scenario: Running session warns on window close
-- **WHEN** a running session exists and the user attempts to close the window
-- **THEN** the browser’s beforeunload confirmation is presented
-
