@@ -44,11 +44,28 @@ func Handler() http.Handler {
 			}
 			// SPA fallback
 			r.URL.Path = "/"
+			disableAppShellCache(w)
 			fileServer.ServeHTTP(w, r)
 			return
 		}
+		if isAppShell(requestPath) {
+			disableAppShellCache(w)
+		}
 		fileServer.ServeHTTP(w, r)
 	})
+}
+
+func isAppShell(requestPath string) bool {
+	switch path.Base(requestPath) {
+	case "index.html", "sw.js", "manifest.webmanifest":
+		return true
+	default:
+		return false
+	}
+}
+
+func disableAppShellCache(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-cache")
 }
 
 // DevHandler serves from web/dist on disk when present (optional helper).
