@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api';
 import { bootErrorMessage, loadInitialConfig } from './boot';
+import { SettingsModal } from './components/SettingsModal';
 import { Sidebar } from './components/Sidebar';
 import { TerminalView } from './components/TerminalView';
-import type { AppConfig, ServerMsg, SessionInfo } from './types';
+import { useColorScheme } from './theme';
+import type { AppConfig, ColorScheme, ServerMsg, SessionInfo } from './types';
 import { cwdBasename, isStandalone } from './util';
 import { TerminalSocket } from './ws';
 
@@ -17,6 +19,7 @@ export default function App() {
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
   const [bootError, setBootError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const prevCount = useRef<number | null>(null);
   const bootstrapped = useRef(false);
   const everConnected = useRef(false);
@@ -28,6 +31,7 @@ export default function App() {
   configRef.current = config;
   const focusedRef = useRef(document.hasFocus());
 
+  const theme = useColorScheme(config?.color_scheme);
   const badgeCount = unread.size;
 
   const reportActionError = useCallback((err: unknown) => {
@@ -271,6 +275,20 @@ export default function App() {
     [],
   );
 
+  const changeColorScheme = useCallback(
+    async (scheme: ColorScheme) => {
+      const previous = configRef.current?.color_scheme;
+      setConfig((c) => (c ? { ...c, color_scheme: scheme } : c));
+      try {
+        setConfig(await api.patchConfig({ color_scheme: scheme }));
+      } catch (err) {
+        if (previous) setConfig((c) => (c ? { ...c, color_scheme: previous } : c));
+        reportActionError(err);
+      }
+    },
+    [reportActionError],
+  );
+
   const onResizeWidthCommit = useMemo(
     () => async (w: number) => {
       try {
@@ -319,6 +337,7 @@ export default function App() {
         unread={unread}
         onSelect={select}
         onNew={() => void createTab()}
+        onOpenSettings={() => setSettingsOpen(true)}
         onReorder={(ids) => {
           void api.reorderSessions(ids).catch(reportActionError);
         }}
@@ -344,8 +363,15 @@ export default function App() {
           socket={socket}
           config={config}
           copyOnSelect={!!config?.copy_on_select}
+          theme={theme}
         />
       </main>
+      <SettingsModal
+        open={settingsOpen}
+        colorScheme={config?.color_scheme ?? 'system'}
+        onColorSchemeChange={(scheme) => void changeColorScheme(scheme)}
+        onClose={() => setSettingsOpen(false)}
+      />
     </div>
   );
 }

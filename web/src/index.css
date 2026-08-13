@@ -9,6 +9,50 @@
   --accent: #89d185;
   --danger: #f14c4c;
   --active: #2a2d2e;
+  --hover: #2c2c2c;
+  --danger-bg: #3a1d1d;
+  --danger-text: #ffb4b4;
+  --overlay: rgba(0, 0, 0, 0.55);
+  --shadow: rgba(0, 0, 0, 0.35);
+}
+
+/* Dark above is the base; light overrides it. The app sets `data-theme` once
+   config is known, and the media query keeps the first paint sensible until
+   then (the default `color_scheme` is `system`). */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #ffffff;
+  --sidebar: #f3f3f3;
+  --border: #d4d4d4;
+  --text: #333333;
+  --muted: #6e6e6e;
+  --accent: #388a34;
+  --danger: #cd3131;
+  --active: #e4e6f1;
+  --hover: #e8e8e8;
+  --danger-bg: #fdecec;
+  --danger-text: #8a1f1f;
+  --overlay: rgba(0, 0, 0, 0.35);
+  --shadow: rgba(0, 0, 0, 0.18);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    color-scheme: light;
+    --bg: #ffffff;
+    --sidebar: #f3f3f3;
+    --border: #d4d4d4;
+    --text: #333333;
+    --muted: #6e6e6e;
+    --accent: #388a34;
+    --danger: #cd3131;
+    --active: #e4e6f1;
+    --hover: #e8e8e8;
+    --danger-bg: #fdecec;
+    --danger-text: #8a1f1f;
+    --overlay: rgba(0, 0, 0, 0.35);
+    --shadow: rgba(0, 0, 0, 0.18);
+  }
 }
 
 * {
@@ -65,7 +109,7 @@ body,
 }
 
 .tab:hover {
-  background: #2c2c2c;
+  background: var(--hover);
 }
 
 .tab.active {
@@ -131,6 +175,23 @@ body,
   border-color: var(--accent);
 }
 
+.sidebar-settings {
+  margin: 0 8px 8px;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+  font-size: 13px;
+}
+
+.sidebar-settings:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
 .main {
   flex: 1;
   min-width: 0;
@@ -183,10 +244,10 @@ body,
   padding: 10px 14px;
   border-radius: 8px;
   border: 1px solid var(--danger);
-  background: #3a1d1d;
-  color: #ffb4b4;
+  background: var(--danger-bg);
+  color: var(--danger-text);
   font-size: 13px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 8px 24px var(--shadow);
 }
 
 .toast-error button {
@@ -197,4 +258,127 @@ body,
   font-size: 16px;
   line-height: 1;
   padding: 0;
+}
+
+.settings-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: grid;
+  place-items: center;
+  background: var(--overlay);
+}
+
+.settings-modal {
+  display: flex;
+  width: min(720px, calc(100vw - 48px));
+  height: min(440px, calc(100vh - 48px));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+  box-shadow: 0 16px 48px var(--shadow);
+}
+
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 180px;
+  flex-shrink: 0;
+  padding: 12px 8px;
+  background: var(--sidebar);
+  border-right: 1px solid var(--border);
+}
+
+.settings-nav-item {
+  padding: 8px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-nav-item.active {
+  background: var(--active);
+}
+
+.settings-pane {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 16px 20px;
+  overflow: auto;
+}
+
+.settings-pane-header h2 {
+  margin: 0 0 16px;
+  font-size: 16px;
+}
+
+.settings-section {
+  flex: 1;
+}
+
+.settings-heading {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.settings-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.settings-option:hover {
+  background: var(--hover);
+}
+
+.settings-option.selected {
+  border-color: var(--accent);
+}
+
+.settings-option-hint {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.settings-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 16px;
+}
+
+.settings-close {
+  padding: 8px 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--sidebar);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.settings-close:hover {
+  border-color: var(--accent);
 }

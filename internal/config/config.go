@@ -20,6 +20,13 @@ type NotificationConfig struct {
 	Sound         bool `json:"sound"`
 }
 
+// Color scheme values accepted by Config.ColorScheme.
+const (
+	ColorSchemeLight  = "light"
+	ColorSchemeDark   = "dark"
+	ColorSchemeSystem = "system"
+)
+
 type Config struct {
 	Port                int                `json:"port"`
 	Shell               string             `json:"shell"`
@@ -28,6 +35,7 @@ type Config struct {
 	FontFamily          string             `json:"font_family"`
 	FontSize            int                `json:"font_size"`
 	SidebarWidth        int                `json:"sidebar_width"`
+	ColorScheme         string             `json:"color_scheme"`
 	Notification        NotificationConfig `json:"notification"`
 	ConfirmCloseRunning bool               `json:"confirm_close_running"`
 	CopyOnSelect        bool               `json:"copy_on_select"`
@@ -45,6 +53,7 @@ func Defaults() Config {
 		FontFamily:      "Menlo, Monaco, 'Courier New', monospace",
 		FontSize:        14,
 		SidebarWidth:    240,
+		ColorScheme:     ColorSchemeSystem,
 		Notification: NotificationConfig{
 			Enabled:       true,
 			Always:        false,
@@ -133,6 +142,9 @@ func (s *Store) applyDefaults() {
 	if s.cfg.SidebarWidth == 0 {
 		s.cfg.SidebarWidth = d.SidebarWidth
 	}
+	if s.cfg.ColorScheme == "" {
+		s.cfg.ColorScheme = d.ColorScheme
+	}
 }
 
 func (s *Store) Get() Config {
@@ -210,6 +222,11 @@ func validate(cfg Config) error {
 	}
 	if cfg.SidebarWidth <= 0 {
 		return fmt.Errorf("sidebar_width must be positive")
+	}
+	switch cfg.ColorScheme {
+	case ColorSchemeLight, ColorSchemeDark, ColorSchemeSystem:
+	default:
+		return fmt.Errorf("color_scheme must be one of %q, %q, %q", ColorSchemeLight, ColorSchemeDark, ColorSchemeSystem)
 	}
 	if cfg.Notification.MinDurationMs < 0 {
 		return fmt.Errorf("notification.min_duration_ms must be non-negative")

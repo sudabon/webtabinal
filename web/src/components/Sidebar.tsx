@@ -23,6 +23,7 @@ type Props = {
   unread: Set<string>;
   onSelect: (id: string) => void;
   onNew: () => void;
+  onOpenSettings: () => void;
   onReorder: (ids: string[]) => void;
   onDuplicate: (id: string) => void;
   onRestart: (id: string) => void;
@@ -136,6 +137,9 @@ export function Sidebar(props: Props) {
       </div>
       <button className="new-tab" type="button" onClick={props.onNew}>
         ＋ 新規タブ
+      </button>
+      <button className="sidebar-settings" type="button" onClick={props.onOpenSettings}>
+        ⚙︎ 設定
       </button>
       <div
         className="sidebar-resizer"
