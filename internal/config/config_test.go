@@ -37,6 +37,8 @@ func TestPatchRejectsInvalidConfig(t *testing.T) {
 		{name: "font size", patch: map[string]any{"font_size": 0}},
 		{name: "sidebar width", patch: map[string]any{"sidebar_width": 0}},
 		{name: "notification duration", patch: map[string]any{"notification": map[string]any{"min_duration_ms": -1}}},
+		{name: "unknown color scheme", patch: map[string]any{"color_scheme": "solarized"}},
+		{name: "empty color scheme", patch: map[string]any{"color_scheme": ""}},
 	}
 
 	for _, tt := range tests {
@@ -45,6 +47,84 @@ func TestPatchRejectsInvalidConfig(t *testing.T) {
 				t.Fatal("Patch returned nil error")
 			}
 		})
+	}
+}
+
+func TestColorSchemeDefaultsToSystem(t *testing.T) {
+	if got := Defaults().ColorScheme; got != ColorSchemeSystem {
+		t.Fatalf("Defaults().ColorScheme = %q, want %q", got, ColorSchemeSystem)
+	}
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	support := filepath.Join(home, "Library", "Application Support", "WebTabinal")
+	if err := os.MkdirAll(support, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(support, "config.json"), []byte(`{"port":8642}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := LoadOrCreate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := store.Public().ColorScheme; got != ColorSchemeSystem {
+		t.Fatalf("stored config without color_scheme resolved to %q, want %q", got, ColorSchemeSystem)
+	}
+}
+
+func TestLoadNormalizesInvalidColorScheme(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	support := filepath.Join(home, "Library", "Application Support", "WebTabinal")
+	if err := os.MkdirAll(support, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(support, "config.json"), []byte(`{"color_scheme":"solarized"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := LoadOrCreate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := store.Public().ColorScheme; got != ColorSchemeSystem {
+		t.Fatalf("invalid stored color_scheme resolved to %q, want %q", got, ColorSchemeSystem)
+	}
+	if _, err := store.Patch(map[string]any{"sidebar_width": 300}); err != nil {
+		t.Fatalf("Patch unrelated field after loading invalid color_scheme: %v", err)
+	}
+}
+
+func TestPatchColorScheme(t *testing.T) {
+	for _, scheme := range []string{ColorSchemeLight, ColorSchemeDark, ColorSchemeSystem} {
+		t.Run(scheme, func(t *testing.T) {
+			store := newTestStore(t)
+			got, err := store.Patch(map[string]any{"color_scheme": scheme})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.ColorScheme != scheme {
+				t.Fatalf("patched color_scheme = %q, want %q", got.ColorScheme, scheme)
+			}
+			if stored := store.Public().ColorScheme; stored != scheme {
+				t.Fatalf("stored color_scheme = %q, want %q", stored, scheme)
+			}
+		})
+	}
+}
+
+func TestPatchInvalidColorSchemeKeepsStoredValue(t *testing.T) {
+	store := newTestStore(t)
+	if _, err := store.Patch(map[string]any{"color_scheme": ColorSchemeLight}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Patch(map[string]any{"color_scheme": "solarized"}); err == nil {
+		t.Fatal("Patch returned nil error for invalid color_scheme")
+	}
+	if got := store.Public().ColorScheme; got != ColorSchemeLight {
+		t.Fatalf("color_scheme = %q after rejected patch, want %q", got, ColorSchemeLight)
 	}
 }
 

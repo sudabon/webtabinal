@@ -11,6 +11,8 @@ export type SessionInfo = {
   run_ms?: number;
 };
 
+export type ColorScheme = 'light' | 'dark' | 'system';
+
 export type AppConfig = {
   port: number;
   shell: string;
@@ -19,6 +21,7 @@ export type AppConfig = {
   font_family: string;
   font_size: number;
   sidebar_width: number;
+  color_scheme: ColorScheme;
   notification: {
     enabled: boolean;
     always: boolean;

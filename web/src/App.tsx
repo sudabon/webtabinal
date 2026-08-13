@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api';
 import { bootErrorMessage, loadInitialConfig } from './boot';
+import { SettingsModal } from './components/SettingsModal';
 import { Sidebar } from './components/Sidebar';
 import { TerminalView } from './components/TerminalView';
-import type { AppConfig, ServerMsg, SessionInfo } from './types';
+import { useColorScheme } from './theme';
+import type { AppConfig, ColorScheme, ServerMsg, SessionInfo } from './types';
 import { cwdBasename, isStandalone } from './util';
 import { TerminalSocket } from './ws';
 
@@ -17,6 +19,7 @@ export default function App() {
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
   const [bootError, setBootError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const prevCount = useRef<number | null>(null);
   const bootstrapped = useRef(false);
   const everConnected = useRef(false);
@@ -27,7 +30,11 @@ export default function App() {
   const configRef = useRef(config);
   configRef.current = config;
   const focusedRef = useRef(document.hasFocus());
+  const colorSchemeRequest = useRef(0);
+  const lastSuccessColorSchemeRequest = useRef(0);
+  const lastCommittedColorScheme = useRef<ColorScheme | undefined>(undefined);
 
+  const theme = useColorScheme(config?.color_scheme);
   const badgeCount = unread.size;
 
   const reportActionError = useCallback((err: unknown) => {
@@ -244,6 +251,7 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (settingsOpen) return;
       if (!e.metaKey) return;
       if (e.key >= '1' && e.key <= '9') {
         const idx = Number(e.key) - 1;
@@ -260,7 +268,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [settingsOpen]);
 
   const width = config?.sidebar_width ?? 240;
 
@@ -269,6 +277,34 @@ export default function App() {
       setConfig((c) => (c ? { ...c, sidebar_width: w } : c));
     },
     [],
+  );
+
+  const changeColorScheme = useCallback(
+    async (scheme: ColorScheme) => {
+      const request = ++colorSchemeRequest.current;
+      lastCommittedColorScheme.current ??= configRef.current?.color_scheme;
+      setConfig((c) => (c ? { ...c, color_scheme: scheme } : c));
+      try {
+        const next = await api.patchConfig({ color_scheme: scheme });
+        if (request > lastSuccessColorSchemeRequest.current) {
+          lastSuccessColorSchemeRequest.current = request;
+          lastCommittedColorScheme.current = next.color_scheme;
+        }
+        if (request === colorSchemeRequest.current) {
+          setConfig(next);
+        } else if (request === lastSuccessColorSchemeRequest.current) {
+          // Newer requests may have already failed; keep UI aligned with the
+          // newest server-confirmed scheme even when this response is stale.
+          setConfig((c) => (c ? { ...c, color_scheme: next.color_scheme } : c));
+        }
+      } catch (err) {
+        if (request !== colorSchemeRequest.current) return;
+        const committed = lastCommittedColorScheme.current;
+        if (committed) setConfig((c) => (c ? { ...c, color_scheme: committed } : c));
+        reportActionError(err);
+      }
+    },
+    [reportActionError],
   );
 
   const onResizeWidthCommit = useMemo(
@@ -319,6 +355,7 @@ export default function App() {
         unread={unread}
         onSelect={select}
         onNew={() => void createTab()}
+        onOpenSettings={() => setSettingsOpen(true)}
         onReorder={(ids) => {
           void api.reorderSessions(ids).catch(reportActionError);
         }}
@@ -344,8 +381,15 @@ export default function App() {
           socket={socket}
           config={config}
           copyOnSelect={!!config?.copy_on_select}
+          theme={theme}
         />
       </main>
+      <SettingsModal
+        open={settingsOpen}
+        colorScheme={config?.color_scheme ?? 'system'}
+        onColorSchemeChange={(scheme) => void changeColorScheme(scheme)}
+        onClose={() => setSettingsOpen(false)}
+      />
     </div>
   );
 }

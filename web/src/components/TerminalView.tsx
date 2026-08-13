@@ -5,6 +5,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { SearchAddon } from '@xterm/addon-search';
 import { WebglAddon } from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
+import { terminalTheme, type ResolvedTheme } from '../theme';
 import type { AppConfig } from '../types';
 import { decodeB64Bytes, TerminalSocket } from '../ws';
 
@@ -13,9 +14,10 @@ type Props = {
   socket: TerminalSocket | null;
   config: AppConfig | null;
   copyOnSelect: boolean;
+  theme: ResolvedTheme;
 };
 
-export function TerminalView({ sessionId, socket, config, copyOnSelect }: Props) {
+export function TerminalView({ sessionId, socket, config, copyOnSelect, theme }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -32,12 +34,7 @@ export function TerminalView({ sessionId, socket, config, copyOnSelect }: Props)
       fontFamily: config?.font_family || "Menlo, Monaco, 'Courier New', monospace",
       fontSize: config?.font_size || 14,
       scrollback: config?.scrollback_lines || 10000,
-      theme: {
-        background: '#1e1e1e',
-        foreground: '#cccccc',
-        cursor: '#ffffff',
-        selectionBackground: '#264f78',
-      },
+      theme: terminalTheme[theme],
       allowProposedApi: true,
     });
     const fit = new FitAddon();
@@ -85,6 +82,12 @@ export function TerminalView({ sessionId, socket, config, copyOnSelect }: Props)
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
+    term.options.theme = terminalTheme[theme];
+  }, [theme]);
 
   useEffect(() => {
     const term = termRef.current;
