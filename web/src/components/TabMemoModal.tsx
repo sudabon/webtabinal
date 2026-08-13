@@ -76,6 +76,8 @@ export function TabMemoModal({ open, initialMemo, onSave, onClose }: Props) {
           disabled={saving}
           onChange={(e) => setValue(clampUnicode(e.target.value))}
           onKeyDown={(e) => {
+            // Ignore Enter used to confirm IME composition (Japanese etc.).
+            if (e.nativeEvent.isComposing || e.keyCode === 229) return;
             if (e.key === 'Enter') {
               e.preventDefault();
               void submit();

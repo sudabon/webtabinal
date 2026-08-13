@@ -16,6 +16,30 @@ open bin/WebTabinal.app
 
 ウィンドウを閉じてもデーモンとセッションは残ります。再オープンすると既存デーモンに再接続します。
 
+## デスクトップアプリの更新
+
+UI と API は `.app` 内のデーモン（`webtabinal-daemon`）に埋め込まれています。`.app` だけ上書きしても、**起動中の古いデーモンが残っていると旧 UI のまま**になります。
+
+```bash
+# アプリを終了し、古いデーモンを止める
+osascript -e 'quit app "WebTabinal"'
+pkill -f 'webtabinal-daemon serve' || true
+
+# 新版をビルドして /Applications へ置き換える
+make desktop
+rm -rf /Applications/WebTabinal.app
+cp -R bin/WebTabinal.app /Applications/
+open /Applications/WebTabinal.app
+```
+
+LaunchAgent（`webtabinal install`）を使っている場合は、置き換え後に新しいバイナリで入れ直してください。
+
+```bash
+make build
+./bin/webtabinal uninstall
+./bin/webtabinal install
+```
+
 ## CLI で起動する場合
 
 ```bash

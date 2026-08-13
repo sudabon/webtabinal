@@ -38,20 +38,20 @@ A memo SHALL contain at most 30 Unicode code points after trimming leading and t
 
 ### Requirement: Delayed hover tooltip
 
-When a tab has a non-empty memo, hovering the pointer over that tab for 2000ms SHALL show a tooltip containing the memo. The tooltip SHALL hide when the pointer leaves the tab or the memo editor opens. Tabs with an empty memo SHALL NOT show a memo tooltip.
+When a tab has a non-empty memo, hovering the pointer over that tab for 1000ms SHALL show a tooltip containing the memo. The tooltip SHALL hide when the pointer leaves the tab or the memo editor opens. Tabs with an empty memo SHALL NOT show a memo tooltip.
 
 #### Scenario: Tooltip appears after delay
 
-- **WHEN** a tab has memo `CI watch` and the pointer remains over the tab for 2000ms
+- **WHEN** a tab has memo `CI watch` and the pointer remains over the tab for 1000ms
 - **THEN** a tooltip showing `CI watch` is visible
 
 #### Scenario: Leave before delay shows nothing
 
-- **WHEN** the pointer leaves the tab before 2000ms
+- **WHEN** the pointer leaves the tab before 1000ms
 - **THEN** no memo tooltip is shown
 
 #### Scenario: Empty memo has no tooltip
 
-- **WHEN** the tab memo is empty and the pointer hovers the tab for 2000ms
+- **WHEN** the tab memo is empty and the pointer hovers the tab for 1000ms
 - **THEN** no memo tooltip is shown
 

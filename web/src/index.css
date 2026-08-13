@@ -120,10 +120,8 @@ body,
 }
 
 .tab-memo-tooltip {
-  position: absolute;
-  left: calc(100% + 8px);
-  top: 8px;
-  z-index: 20;
+  position: fixed;
+  z-index: 1300;
   max-width: 220px;
   padding: 6px 8px;
   border: 1px solid var(--border);
@@ -239,11 +237,28 @@ body,
   overflow: hidden;
 }
 
+/* FitAddon reads this node's computed height/width and ignores parent padding.
+   Under border-box, measuring a padded parent (or absolutely inset .xterm)
+   over-counts rows and clips the last line (e.g. Claude Code status bar). */
+.terminal-fit {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+}
+
 .terminal-host .xterm {
   position: absolute;
-  inset: 4px;
+  inset: 0;
   height: auto;
   overflow: hidden;
+}
+
+/* Global border-box can create 1px seams between cell backgrounds in xterm
+   (visible as a hairline through Cursor Agent's input bar). */
+.terminal-host .xterm,
+.terminal-host .xterm * {
+  box-sizing: content-box;
 }
 
 /* xterm.css sets `.xterm-viewport { overflow-y: scroll }` so a native bar is

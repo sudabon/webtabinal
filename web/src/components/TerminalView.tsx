@@ -143,5 +143,11 @@ export function TerminalView({ sessionId, socket, config, copyOnSelect, theme }:
     return () => window.removeEventListener('webtabinal-ws', listener);
   }, [socket]);
 
-  return <div className="terminal-host" ref={hostRef} />;
+  // FitAddon measures hostRef's parent box. Keep padding on .terminal-host and
+  // open into a padding-free .terminal-fit so rows are not over-counted/clipped.
+  return (
+    <div className="terminal-host">
+      <div className="terminal-fit" ref={hostRef} />
+    </div>
+  );
 }

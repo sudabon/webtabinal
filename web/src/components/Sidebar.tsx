@@ -15,10 +15,11 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { Settings } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { SessionInfo } from '../types';
 import { cwdBasename, formatElapsed } from '../util';
 
-const MEMO_TOOLTIP_DELAY_MS = 2000;
+const MEMO_TOOLTIP_DELAY_MS = 1000;
 
 type Props = {
   sessions: SessionInfo[];
@@ -67,7 +68,9 @@ function SortableTab({
     transition,
     opacity: isDragging ? 0.7 : 1,
   };
+  const tabElRef = useRef<HTMLDivElement | null>(null);
   const [tooltipVisible, setTooltipVisible] = useState(false);
+  const [tooltipPos, setTooltipPos] = useState<{ top: number; left: number } | null>(null);
   const hoverTimer = useRef<number | null>(null);
 
   const clearHoverTimer = () => {
@@ -77,14 +80,42 @@ function SortableTab({
     }
   };
 
+  const hideTooltip = () => {
+    clearHoverTimer();
+    setTooltipVisible(false);
+    setTooltipPos(null);
+  };
+
+  const setTabRef = (node: HTMLDivElement | null) => {
+    setNodeRef(node);
+    tabElRef.current = node;
+  };
+
   useEffect(() => {
-    if (memoEditorOpen) {
+    if (memoEditorOpen || isDragging) {
       clearHoverTimer();
       setTooltipVisible(false);
+      setTooltipPos(null);
     }
-  }, [memoEditorOpen]);
+  }, [memoEditorOpen, isDragging]);
 
   useEffect(() => () => clearHoverTimer(), []);
+
+  useEffect(() => {
+    if (!tooltipVisible) return;
+    const onRepositionHide = () => {
+      clearHoverTimer();
+      setTooltipVisible(false);
+      setTooltipPos(null);
+    };
+    const scrollParent = tabElRef.current?.closest('.sidebar-tabs');
+    scrollParent?.addEventListener('scroll', onRepositionHide, { passive: true });
+    window.addEventListener('resize', onRepositionHide);
+    return () => {
+      scrollParent?.removeEventListener('scroll', onRepositionHide);
+      window.removeEventListener('resize', onRepositionHide);
+    };
+  }, [tooltipVisible]);
 
   const cmdOpacity = session.state === 'running' ? 1 : 0.5;
   const stateLabel =
@@ -100,7 +131,7 @@ function SortableTab({
 
   return (
     <div
-      ref={setNodeRef}
+      ref={setTabRef}
       style={style}
       className={`tab ${active ? 'active' : ''} ${session.state === 'exited' ? 'exited' : ''}`}
       onClick={onSelect}
@@ -111,12 +142,14 @@ function SortableTab({
       onMouseEnter={() => {
         if (!memo || memoEditorOpen) return;
         clearHoverTimer();
-        hoverTimer.current = window.setTimeout(() => setTooltipVisible(true), MEMO_TOOLTIP_DELAY_MS);
+        hoverTimer.current = window.setTimeout(() => {
+          const rect = tabElRef.current?.getBoundingClientRect();
+          if (!rect) return;
+          setTooltipPos({ top: rect.top, left: rect.right + 8 });
+          setTooltipVisible(true);
+        }, MEMO_TOOLTIP_DELAY_MS);
       }}
-      onMouseLeave={() => {
-        clearHoverTimer();
-        setTooltipVisible(false);
-      }}
+      onMouseLeave={hideTooltip}
       onContextMenu={(e) => {
         e.preventDefault();
         const action = window.prompt(
@@ -130,10 +163,15 @@ function SortableTab({
       {...attributes}
       {...listeners}
     >
-      {tooltipVisible && memo && (
-        <div className="tab-memo-tooltip" role="tooltip">
+      {tooltipVisible && memo && tooltipPos && createPortal(
+        <div
+          className="tab-memo-tooltip"
+          role="tooltip"
+          style={{ top: tooltipPos.top, left: tooltipPos.left }}
+        >
           {memo}
-        </div>
+        </div>,
+        document.body,
       )}
       <div className="tab-cwd">
         {cwdBasename(session.cwd)}
