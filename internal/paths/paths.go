@@ -44,6 +44,14 @@ func IntegrationPath() (string, error) {
 	return filepath.Join(dir, "integration.zsh"), nil
 }
 
+func ZshInjectDir() (string, error) {
+	dir, err := SupportDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "zsh-inject"), nil
+}
+
 func LogPath() (string, error) {
 	dir, err := LogsDir()
 	if err != nil {

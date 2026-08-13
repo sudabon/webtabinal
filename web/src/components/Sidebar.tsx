@@ -13,6 +13,7 @@ import {
   arrayMove,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { Settings } from 'lucide-react';
 import type { SessionInfo } from '../types';
 import { cwdBasename, formatElapsed } from '../util';
 
@@ -139,7 +140,8 @@ export function Sidebar(props: Props) {
         ＋ 新規タブ
       </button>
       <button className="sidebar-settings" type="button" onClick={props.onOpenSettings}>
-        ⚙︎ 設定
+        <Settings className="sidebar-settings-icon" size={22} strokeWidth={2} aria-hidden />
+        設定
       </button>
       <div
         className="sidebar-resizer"

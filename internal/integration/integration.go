@@ -24,7 +24,10 @@ func Write() error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, script, 0o644)
+	if err := os.WriteFile(path, script, 0o644); err != nil {
+		return err
+	}
+	return writeInjectFiles()
 }
 
 func ZshrcSnippet() string {

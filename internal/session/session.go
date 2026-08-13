@@ -14,6 +14,7 @@ import (
 
 	"github.com/creack/pty"
 	"github.com/google/uuid"
+	"github.com/sudabon/webtabinal/internal/integration"
 	"github.com/sudabon/webtabinal/internal/osc"
 )
 
@@ -115,10 +116,19 @@ func Create(opts CreateOpts) (*Session, error) {
 	id := uuid.NewString()
 	cmd := exec.Command(opts.Shell, "-il")
 	cmd.Dir = opts.Cwd
-	cmd.Env = append(os.Environ(),
+	env := append(os.Environ(),
 		fmt.Sprintf("WEBTABINAL_SESSION_ID=%s", id),
 		"TERM=xterm-256color",
 	)
+	injected, err := integration.ApplyZshInjection(env, opts.Shell)
+	if err != nil {
+		if opts.Logger != nil {
+			opts.Logger.Printf("zsh integration inject: %v", err)
+		}
+	} else {
+		env = injected
+	}
+	cmd.Env = env
 
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: opts.Cols, Rows: opts.Rows})
 	if err != nil {

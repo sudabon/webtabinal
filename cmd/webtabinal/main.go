@@ -95,7 +95,9 @@ func runServe() error {
 	if err := integration.Write(); err != nil {
 		return err
 	}
-	logger.Printf("integration written; add to .zshrc:\n  %s", integration.ZshrcSnippet())
+	if integPath, err := paths.IntegrationPath(); err == nil {
+		logger.Printf("zsh integration written to %s", integPath)
+	}
 
 	mgr := session.NewManager(cfg, logger)
 	defer mgr.Close()

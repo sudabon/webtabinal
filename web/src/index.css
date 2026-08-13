@@ -183,8 +183,15 @@ body,
   color: var(--muted);
   border-radius: 6px;
   cursor: pointer;
-  text-align: left;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   font-size: 13px;
+}
+
+.sidebar-settings-icon {
+  flex-shrink: 0;
 }
 
 .sidebar-settings:hover {

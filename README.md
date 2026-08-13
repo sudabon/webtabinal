@@ -16,15 +16,15 @@ make build
 # → http://127.0.0.1:8642
 ```
 
-## シェル連携（推奨）
+## シェル連携
 
-`~/.zshrc` に次の 1 行を追加します。
+セッション起動時に zsh 統合を自動で読み込むため、`~/.zshrc` への追記は不要です。これによりタブのカレントディレクトリ・実行中コマンド・状態が更新されます。
+
+他の端末でも同じスクリプトを使いたい場合のみ、次の 1 行を `~/.zshrc` に追加します。
 
 ```zsh
 [[ -n "$WEBTABINAL_SESSION_ID" ]] && source "$HOME/Library/Application Support/WebTabinal/integration.zsh"
 ```
-
-この設定がない場合、タブはベストエフォートのプロセス検出にフォールバックし、ライブな CWD は取得できません。
 
 ## LaunchAgent としてインストール
 

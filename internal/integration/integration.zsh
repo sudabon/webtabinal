@@ -1,6 +1,8 @@
 # WebTabinal zsh integration v1
 # Guard: only active inside WebTabinal sessions
 [[ -z "$WEBTABINAL_SESSION_ID" ]] && return
+[[ -n "$WEBTABINAL_INTEGRATION_LOADED" ]] && return
+WEBTABINAL_INTEGRATION_LOADED=1
 
 __webtabinal_osc() {
   printf '\033]%s\033\\' "$1"
