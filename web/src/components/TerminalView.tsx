@@ -107,6 +107,17 @@ export function TerminalView({ sessionId, socket, config, copyOnSelect }: Props)
   }, [sessionId, socket]);
 
   useEffect(() => {
+    const onReconnect = () => {
+      const term = termRef.current;
+      if (!term || !attachedRef.current) return;
+      // Reconnect keeps the same socket/session refs; reset before replay is written.
+      term.reset();
+    };
+    window.addEventListener('webtabinal-ws-reconnect', onReconnect);
+    return () => window.removeEventListener('webtabinal-ws-reconnect', onReconnect);
+  }, []);
+
+  useEffect(() => {
     if (!socket || !termRef.current) return;
     const handler = (msg: import('../types').ServerMsg) => {
       const term = termRef.current;

@@ -117,6 +117,35 @@ func TestReplayPendingOutputIsBounded(t *testing.T) {
 	}
 }
 
+func TestAttachOverflowNotifiesClient(t *testing.T) {
+	c := &wsClient{
+		attach:       map[string]bool{"session": true},
+		replaying:    map[string]bool{"session": true},
+		pending:      map[string][][]byte{},
+		pendingBytes: map[string]int{},
+		send:         make(chan []byte, 4),
+		quit:         make(chan struct{}),
+	}
+	h := &Hub{clients: map[*wsClient]struct{}{c: {}}}
+
+	h.broadcastOutput(&session.Session{ID: "session"}, make([]byte, 4*1024*1024+1))
+	if !h.flushAttachPending(c, "session") {
+		t.Fatal("expected overflow during attach flush")
+	}
+
+	select {
+	case raw := <-c.send:
+		if !strings.Contains(string(raw), `"code":"attach_overflow"`) {
+			t.Fatalf("message = %s, want attach_overflow error", raw)
+		}
+	default:
+		t.Fatal("expected attach_overflow error message")
+	}
+	if c.replaying["session"] {
+		t.Fatal("replaying should be cleared after overflow")
+	}
+}
+
 func TestResizeRejectsOutOfRangeDimensions(t *testing.T) {
 	store := testConfigStore(t)
 	manager := session.NewManager(store, nil)

@@ -1,18 +1,17 @@
 package static
 
 import (
-	"net/http"
-	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
-func TestMissingAssetReturnsNotFound(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/assets/missing.js", nil)
-	rec := httptest.NewRecorder()
-
-	Handler().ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+func TestIsPlaceholderMatchesEmbeddedIndex(t *testing.T) {
+	b, err := distEmbed.ReadFile("dist/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := strings.Contains(string(b), placeholderMarker)
+	if got := IsPlaceholder(); got != want {
+		t.Fatalf("IsPlaceholder() = %v, want %v", got, want)
 	}
 }

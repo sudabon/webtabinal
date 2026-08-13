@@ -154,6 +154,13 @@ body,
   text-align: center;
 }
 
+.empty-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
 .empty button {
   padding: 12px 18px;
   border-radius: 8px;
@@ -161,4 +168,33 @@ body,
   background: var(--sidebar);
   color: var(--text);
   cursor: pointer;
+}
+
+.toast-error {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: min(520px, calc(100vw - 24px));
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--danger);
+  background: #3a1d1d;
+  color: #ffb4b4;
+  font-size: 13px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.toast-error button {
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0;
 }

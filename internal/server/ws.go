@@ -148,27 +148,7 @@ func (h *Hub) handleClient(c *wsClient, msg clientMsg) {
 				})
 			}
 		}
-		for {
-			c.mu.Lock()
-			pending := c.pending[msg.SID]
-			c.pending[msg.SID] = nil
-			c.pendingBytes[msg.SID] = 0
-			if len(pending) == 0 {
-				c.replaying[msg.SID] = false
-				delete(c.pending, msg.SID)
-				delete(c.pendingBytes, msg.SID)
-				c.mu.Unlock()
-				break
-			}
-			c.mu.Unlock()
-			for _, data := range pending {
-				h.send(c, map[string]any{
-					"t":    "output",
-					"sid":  msg.SID,
-					"data": base64.StdEncoding.EncodeToString(data),
-				})
-			}
-		}
+		_ = h.flushAttachPending(c, msg.SID)
 		h.send(c, stateMsg(s.Info()))
 	case "input":
 		s, ok := h.manager.Get(msg.SID)
@@ -219,6 +199,50 @@ func (h *Hub) broadcastOutput(s *session.Session, data []byte) {
 		c.mu.Unlock()
 		if ok {
 			h.send(c, payload)
+		}
+	}
+}
+
+func (h *Hub) sendAttachOverflow(c *wsClient, sid string) {
+	h.send(c, map[string]any{
+		"t":       "error",
+		"sid":     sid,
+		"code":    "attach_overflow",
+		"message": "Live output overflowed during attach; re-attach required",
+	})
+}
+
+// flushAttachPending drains buffered live output after ring replay.
+// If pending overflowed, it notifies the client and returns true.
+func (h *Hub) flushAttachPending(c *wsClient, sid string) (overflowed bool) {
+	for {
+		c.mu.Lock()
+		pending := c.pending[sid]
+		overflowed = c.pendingBytes[sid] < 0
+		c.pending[sid] = nil
+		c.pendingBytes[sid] = 0
+		if overflowed {
+			c.replaying[sid] = false
+			delete(c.pending, sid)
+			delete(c.pendingBytes, sid)
+			c.mu.Unlock()
+			h.sendAttachOverflow(c, sid)
+			return true
+		}
+		if len(pending) == 0 {
+			c.replaying[sid] = false
+			delete(c.pending, sid)
+			delete(c.pendingBytes, sid)
+			c.mu.Unlock()
+			return false
+		}
+		c.mu.Unlock()
+		for _, data := range pending {
+			h.send(c, map[string]any{
+				"t":    "output",
+				"sid":  sid,
+				"data": base64.StdEncoding.EncodeToString(data),
+			})
 		}
 	}
 }

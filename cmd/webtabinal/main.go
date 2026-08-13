@@ -101,6 +101,9 @@ func runServe() error {
 	defer mgr.Close()
 
 	hub := server.NewHub(mgr, cfg, logger)
+	if static.IsPlaceholder() {
+		logger.Printf("warning: embedded frontend is a placeholder; run `make build` (not `go run` / `go build` alone) before serve")
+	}
 	srv := server.New(cfg, logger, hub, static.Handler())
 	return srv.Run(ctx)
 }

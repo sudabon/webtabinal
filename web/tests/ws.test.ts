@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { loadInitialConfig } from '../src/boot.ts';
 import { TerminalSocket } from '../src/ws.ts';
 
 class FakeWebSocket {
@@ -78,4 +79,64 @@ test('reconnect resends the active attach and terminal size', async () => {
     { t: 'resize', sid: 'sid', cols: 120, rows: 40 },
   ]);
   socket.close();
+});
+
+test('reconnect notifies onStatus(true) before re-attach so UI can reset', async () => {
+  FakeWebSocket.instances = [];
+  const status: boolean[] = [];
+  const socket = new TerminalSocket({
+    onMessage: () => {},
+    onStatus: (connected) => {
+      status.push(connected);
+    },
+  });
+  const first = FakeWebSocket.instances[0];
+  first.onopen?.();
+  assert.deepEqual(status, [true]);
+
+  socket.attach('sid');
+  first.close();
+  assert.deepEqual(status, [true, false]);
+
+  await new Promise((resolve) => setTimeout(resolve, 550));
+  const second = FakeWebSocket.instances[1];
+  assert.ok(second);
+
+  let statusBeforeSend = false;
+  const originalSend = second.send.bind(second);
+  second.send = (data: string) => {
+    if (!statusBeforeSend) {
+      statusBeforeSend = status.at(-1) === true && status.filter((v) => v).length >= 2;
+    }
+    originalSend(data);
+  };
+  second.onopen?.();
+
+  assert.equal(status.at(-1), true);
+  assert.ok(statusBeforeSend, 'onStatus(true) must run before attach is sent');
+  assert.deepEqual(JSON.parse(second.sent[0]), { t: 'attach', sid: 'sid' });
+  socket.close();
+});
+
+test('loadInitialConfig surfaces getConfig rejection for boot UI', async () => {
+  const failed = await loadInitialConfig(async () => {
+    throw new Error('config unavailable');
+  });
+  assert.deepEqual(failed, { ok: false, error: 'config unavailable' });
+
+  const ok = await loadInitialConfig(async () => ({
+    port: 8642,
+    shell: '/bin/zsh',
+    scrollback_lines: 10000,
+    ring_buffer_bytes: 1,
+    font_family: 'Menlo',
+    font_size: 14,
+    sidebar_width: 240,
+    notification: { enabled: true, always: false, min_duration_ms: 0, sound: false },
+    confirm_close_running: true,
+    copy_on_select: false,
+    quit_when_no_tabs: true,
+    close_tab_on_clean_exit: false,
+  }));
+  assert.equal(ok.ok, true);
 });

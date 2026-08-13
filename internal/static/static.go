@@ -13,6 +13,17 @@ import (
 //go:embed all:dist
 var distEmbed embed.FS
 
+const placeholderMarker = "Frontend not built"
+
+// IsPlaceholder reports whether the embedded index.html is still the build stub.
+func IsPlaceholder() bool {
+	b, err := distEmbed.ReadFile("dist/index.html")
+	if err != nil {
+		return true
+	}
+	return strings.Contains(string(b), placeholderMarker)
+}
+
 func Handler() http.Handler {
 	sub, err := fs.Sub(distEmbed, "dist")
 	if err != nil {

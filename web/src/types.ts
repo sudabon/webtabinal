@@ -35,4 +35,5 @@ export type ServerMsg =
   | { t: 'sessions'; list: SessionInfo[] }
   | { t: 'state'; sid: string; cwd: string; cmd: string; state: SessionState; exit: number | null; integrated: boolean; run_ms?: number }
   | { t: 'output'; sid: string; data: string }
-  | { t: 'replay'; sid: string; data: string; done: boolean };
+  | { t: 'replay'; sid: string; data: string; done: boolean }
+  | { t: 'error'; sid?: string; code?: string; message: string };

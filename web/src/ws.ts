@@ -39,6 +39,7 @@ export class TerminalSocket {
     this.ws = ws;
     ws.onopen = () => {
       this.attempt = 0;
+      // Notify before re-attach so UI can reset the terminal before replay arrives.
       this.handlers.onStatus?.(true);
       if (this.attached) {
         this.send({ t: 'attach', sid: this.attached });

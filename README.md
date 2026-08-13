@@ -74,6 +74,11 @@ make build
 ./bin/webtabinal serve
 ```
 
+Do **not** run `go run ./cmd/webtabinal serve` or `go build` alone for a working UI.
+Those leave the embedded `index.html` as a “Frontend not built” placeholder; the daemon
+will start and log a warning, but the browser will show an empty page. Always use
+`make build` (or at least build the web app and copy it into `internal/static/dist`) first.
+
 Frontend-only development uses the Vite dev server:
 
 ```bash

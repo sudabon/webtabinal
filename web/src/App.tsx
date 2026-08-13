@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api';
+import { bootErrorMessage, loadInitialConfig } from './boot';
 import { Sidebar } from './components/Sidebar';
 import { TerminalView } from './components/TerminalView';
 import type { AppConfig, ServerMsg, SessionInfo } from './types';
@@ -15,8 +16,10 @@ export default function App() {
   const [emptyVisible, setEmptyVisible] = useState(false);
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
   const [bootError, setBootError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const prevCount = useRef<number | null>(null);
   const bootstrapped = useRef(false);
+  const everConnected = useRef(false);
   const sessionsRef = useRef(sessions);
   sessionsRef.current = sessions;
   const activeRef = useRef(activeId);
@@ -26,6 +29,18 @@ export default function App() {
   const focusedRef = useRef(document.hasFocus());
 
   const badgeCount = unread.size;
+
+  const reportActionError = useCallback((err: unknown) => {
+    const message = bootErrorMessage(err);
+    console.error(err);
+    setActionError(message);
+  }, []);
+
+  useEffect(() => {
+    if (!actionError) return;
+    const timer = window.setTimeout(() => setActionError(null), 5000);
+    return () => window.clearTimeout(timer);
+  }, [actionError]);
 
   useEffect(() => {
     const onFocus = () => { focusedRef.current = true; };
@@ -91,9 +106,14 @@ export default function App() {
     let sock: TerminalSocket | null = null;
     let cancelled = false;
     (async () => {
-      const cfg = await api.getConfig();
+      const loaded = await loadInitialConfig(() => api.getConfig());
       if (cancelled) return;
-      setConfig(cfg);
+      if (!loaded.ok) {
+        setBootError(loaded.error);
+        setEmptyVisible(true);
+        return;
+      }
+      setConfig(loaded.config);
 
       if (isStandalone() && 'Notification' in window && Notification.permission === 'default') {
         void Notification.requestPermission();
@@ -103,6 +123,13 @@ export default function App() {
         onMessage: (msg) => {
           window.dispatchEvent(new CustomEvent('webtabinal-ws', { detail: msg }));
           handleMsg(msg);
+        },
+        onStatus: (connected) => {
+          if (!connected) return;
+          if (everConnected.current) {
+            window.dispatchEvent(new Event('webtabinal-ws-reconnect'));
+          }
+          everConnected.current = true;
         },
       });
       setSocket(sock);
@@ -138,6 +165,13 @@ export default function App() {
             return next;
           });
         }
+        if (msg.t === 'error') {
+          setActionError(msg.message);
+          if (msg.code === 'attach_overflow' && msg.sid) {
+            window.dispatchEvent(new Event('webtabinal-ws-reconnect'));
+            sock?.attach(msg.sid);
+          }
+        }
       }
     })();
     return () => {
@@ -152,7 +186,7 @@ export default function App() {
       bootstrapped.current = true;
       void api.createSession().catch((err: unknown) => {
         console.error(err);
-        setBootError(err instanceof Error ? err.message : String(err));
+        setBootError(bootErrorMessage(err));
         setEmptyVisible(true);
       });
     }
@@ -184,8 +218,16 @@ export default function App() {
   };
 
   const createTab = async () => {
-    const s = await api.createSession();
-    setActiveId(s.id);
+    try {
+      const s = await api.createSession();
+      setBootError(null);
+      setActiveId(s.id);
+    } catch (err) {
+      reportActionError(err);
+      if (emptyVisible) {
+        setBootError(bootErrorMessage(err));
+      }
+    }
   };
 
   const closeTab = async (id: string) => {
@@ -193,7 +235,11 @@ export default function App() {
     if (s?.state === 'running' && config?.confirm_close_running !== false) {
       if (!window.confirm('このタブは実行中です。閉じますか？')) return;
     }
-    await api.deleteSession(id);
+    try {
+      await api.deleteSession(id);
+    } catch (err) {
+      reportActionError(err);
+    }
   };
 
   useEffect(() => {
@@ -230,27 +276,42 @@ export default function App() {
       try {
         const next = await api.patchConfig({ sidebar_width: w });
         setConfig(next);
-      } catch {
-        /* ignore */
+      } catch (err) {
+        reportActionError(err);
       }
     },
-    [],
+    [reportActionError],
   );
 
   if (emptyVisible && sessions.length === 0) {
     return (
       <div className="empty">
-        <h1>{bootError ? 'タブを作成できませんでした' : 'すべてのタブを閉じました'}</h1>
+        <h1>{bootError ? '起動できませんでした' : 'すべてのタブを閉じました'}</h1>
         {bootError && <p>{bootError}</p>}
-        <button type="button" onClick={() => void createTab()}>
-          ＋ 新規タブ
-        </button>
+        <div className="empty-actions">
+          {bootError && (
+            <button type="button" onClick={() => window.location.reload()}>
+              再試行
+            </button>
+          )}
+          <button type="button" onClick={() => void createTab()}>
+            ＋ 新規タブ
+          </button>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="app">
+      {actionError && (
+        <div className="toast-error" role="alert">
+          {actionError}
+          <button type="button" aria-label="閉じる" onClick={() => setActionError(null)}>
+            ×
+          </button>
+        </div>
+      )}
       <Sidebar
         sessions={sessions}
         activeId={activeId}
@@ -258,9 +319,21 @@ export default function App() {
         unread={unread}
         onSelect={select}
         onNew={() => void createTab()}
-        onReorder={(ids) => void api.reorderSessions(ids)}
-        onDuplicate={(id) => void api.duplicateSession(id).then((s) => setActiveId(s.id))}
-        onRestart={(id) => void api.restartSession(id).then((s) => setActiveId(s.id))}
+        onReorder={(ids) => {
+          void api.reorderSessions(ids).catch(reportActionError);
+        }}
+        onDuplicate={(id) => {
+          void api
+            .duplicateSession(id)
+            .then((s) => setActiveId(s.id))
+            .catch(reportActionError);
+        }}
+        onRestart={(id) => {
+          void api
+            .restartSession(id)
+            .then((s) => setActiveId(s.id))
+            .catch(reportActionError);
+        }}
         onClose={(id) => void closeTab(id)}
         onResizeWidth={onResizeWidth}
         onResizeWidthCommit={(w) => void onResizeWidthCommit(w)}
