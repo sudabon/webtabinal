@@ -64,6 +64,8 @@ body,
 #root {
   margin: 0;
   height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
   background: var(--bg);
   color: var(--text);
 }
@@ -203,15 +205,31 @@ body,
   flex: 1;
   min-width: 0;
   background: var(--bg);
+  overflow: hidden;
 }
 
 .terminal-host {
   height: 100%;
   padding: 4px;
+  overflow: hidden;
 }
 
 .terminal-host .xterm {
   height: 100%;
+  overflow: hidden;
+}
+
+/* xterm.css sets `.xterm-viewport { overflow-y: scroll }` so a native bar is
+   always reserved. In a browser tab macOS overlay scrollbars hide it; in an
+   installed Chrome PWA they become a thick classic bar and ::-webkit-scrollbar
+   is ignored. Hide overflow instead of styling the thumb. */
+.terminal-host .xterm .xterm-viewport {
+  overflow: hidden !important;
+  background-color: transparent;
+}
+
+.terminal-host .xterm-scrollable-element > .scrollbar {
+  display: none !important;
 }
 
 .empty {

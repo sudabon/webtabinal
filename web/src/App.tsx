@@ -68,10 +68,8 @@ export default function App() {
   }, [badgeCount]);
 
   useEffect(() => {
-    const active = sessions.find((s) => s.id === activeId);
-    const name = active ? cwdBasename(active.cwd) : 'WebTabinal';
-    document.title = active ? `${name} — WebTabinal` : 'WebTabinal';
-  }, [sessions, activeId]);
+    document.title = 'WebTabinal';
+  }, []);
 
   useEffect(() => {
     const running = sessions.some((s) => s.state === 'running');
