@@ -74,6 +74,29 @@ func TestColorSchemeDefaultsToSystem(t *testing.T) {
 	}
 }
 
+func TestLoadNormalizesInvalidColorScheme(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	support := filepath.Join(home, "Library", "Application Support", "WebTabinal")
+	if err := os.MkdirAll(support, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(support, "config.json"), []byte(`{"color_scheme":"solarized"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := LoadOrCreate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := store.Public().ColorScheme; got != ColorSchemeSystem {
+		t.Fatalf("invalid stored color_scheme resolved to %q, want %q", got, ColorSchemeSystem)
+	}
+	if _, err := store.Patch(map[string]any{"sidebar_width": 300}); err != nil {
+		t.Fatalf("Patch unrelated field after loading invalid color_scheme: %v", err)
+	}
+}
+
 func TestPatchColorScheme(t *testing.T) {
 	for _, scheme := range []string{ColorSchemeLight, ColorSchemeDark, ColorSchemeSystem} {
 		t.Run(scheme, func(t *testing.T) {

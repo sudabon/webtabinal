@@ -30,6 +30,9 @@ export default function App() {
   const configRef = useRef(config);
   configRef.current = config;
   const focusedRef = useRef(document.hasFocus());
+  const colorSchemeRequest = useRef(0);
+  const lastSuccessColorSchemeRequest = useRef(0);
+  const lastCommittedColorScheme = useRef<ColorScheme | undefined>(undefined);
 
   const theme = useColorScheme(config?.color_scheme);
   const badgeCount = unread.size;
@@ -248,6 +251,7 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (settingsOpen) return;
       if (!e.metaKey) return;
       if (e.key >= '1' && e.key <= '9') {
         const idx = Number(e.key) - 1;
@@ -264,7 +268,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [settingsOpen]);
 
   const width = config?.sidebar_width ?? 240;
 
@@ -277,12 +281,26 @@ export default function App() {
 
   const changeColorScheme = useCallback(
     async (scheme: ColorScheme) => {
-      const previous = configRef.current?.color_scheme;
+      const request = ++colorSchemeRequest.current;
+      lastCommittedColorScheme.current ??= configRef.current?.color_scheme;
       setConfig((c) => (c ? { ...c, color_scheme: scheme } : c));
       try {
-        setConfig(await api.patchConfig({ color_scheme: scheme }));
+        const next = await api.patchConfig({ color_scheme: scheme });
+        if (request > lastSuccessColorSchemeRequest.current) {
+          lastSuccessColorSchemeRequest.current = request;
+          lastCommittedColorScheme.current = next.color_scheme;
+        }
+        if (request === colorSchemeRequest.current) {
+          setConfig(next);
+        } else if (request === lastSuccessColorSchemeRequest.current) {
+          // Newer requests may have already failed; keep UI aligned with the
+          // newest server-confirmed scheme even when this response is stale.
+          setConfig((c) => (c ? { ...c, color_scheme: next.color_scheme } : c));
+        }
       } catch (err) {
-        if (previous) setConfig((c) => (c ? { ...c, color_scheme: previous } : c));
+        if (request !== colorSchemeRequest.current) return;
+        const committed = lastCommittedColorScheme.current;
+        if (committed) setConfig((c) => (c ? { ...c, color_scheme: committed } : c));
         reportActionError(err);
       }
     },

@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import type { ColorScheme } from '../types';
 import { AppearanceSettings } from './AppearanceSettings';
 
@@ -12,6 +12,17 @@ type Props = {
 };
 
 export function SettingsModal({ open, colorScheme, onColorSchemeChange, onClose }: Props) {
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    closeButtonRef.current?.focus();
+    return () => {
+      if (previouslyFocused?.isConnected) previouslyFocused.focus();
+    };
+  }, [open]);
+
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -48,7 +59,7 @@ export function SettingsModal({ open, colorScheme, onColorSchemeChange, onClose 
           </header>
           <AppearanceSettings colorScheme={colorScheme} onColorSchemeChange={onColorSchemeChange} />
           <footer className="settings-footer">
-            <button className="settings-close" type="button" onClick={onClose}>
+            <button ref={closeButtonRef} className="settings-close" type="button" onClick={onClose}>
               キャンセル
             </button>
           </footer>

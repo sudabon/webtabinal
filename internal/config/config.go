@@ -142,7 +142,9 @@ func (s *Store) applyDefaults() {
 	if s.cfg.SidebarWidth == 0 {
 		s.cfg.SidebarWidth = d.SidebarWidth
 	}
-	if s.cfg.ColorScheme == "" {
+	switch s.cfg.ColorScheme {
+	case ColorSchemeLight, ColorSchemeDark, ColorSchemeSystem:
+	default:
 		s.cfg.ColorScheme = d.ColorScheme
 	}
 }
