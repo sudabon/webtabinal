@@ -10,6 +10,9 @@ import (
 //go:embed integration.zsh
 var script []byte
 
+//go:embed integration.bash
+var bashScript []byte
+
 const Version = "1"
 
 func Write() error {
@@ -27,7 +30,10 @@ func Write() error {
 	if err := os.WriteFile(path, script, 0o644); err != nil {
 		return err
 	}
-	return writeInjectFiles()
+	if err := writeInjectFiles(); err != nil {
+		return err
+	}
+	return writeBashFiles()
 }
 
 func ZshrcSnippet() string {

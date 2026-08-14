@@ -52,6 +52,30 @@ func ZshInjectDir() (string, error) {
 	return filepath.Join(dir, "zsh-inject"), nil
 }
 
+func BashIntegrationPath() (string, error) {
+	dir, err := SupportDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "integration.bash"), nil
+}
+
+func BashInjectDir() (string, error) {
+	dir, err := SupportDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "bash-inject"), nil
+}
+
+func BashRcfile() (string, error) {
+	dir, err := BashInjectDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "bashrc"), nil
+}
+
 func LogPath() (string, error) {
 	dir, err := LogsDir()
 	if err != nil {

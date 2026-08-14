@@ -99,6 +99,9 @@ func runServe() error {
 	if integPath, err := paths.IntegrationPath(); err == nil {
 		logger.Printf("zsh integration written to %s", integPath)
 	}
+	if bashPath, err := paths.BashIntegrationPath(); err == nil {
+		logger.Printf("bash integration written to %s", bashPath)
+	}
 
 	mgr := session.NewManager(cfg, logger)
 	defer mgr.Close()

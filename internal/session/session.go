@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/sudabon/webtabinal/internal/integration"
 	"github.com/sudabon/webtabinal/internal/osc"
+	"github.com/sudabon/webtabinal/internal/paths"
 )
 
 type State string
@@ -133,8 +134,6 @@ func Create(opts CreateOpts) (*Session, error) {
 	}
 
 	id := uuid.NewString()
-	cmd := exec.Command(opts.Shell, "-il")
-	cmd.Dir = opts.Cwd
 	env := append(os.Environ(),
 		fmt.Sprintf("WEBTABINAL_SESSION_ID=%s", id),
 		"TERM=xterm-256color",
@@ -147,6 +146,16 @@ func Create(opts CreateOpts) (*Session, error) {
 	} else {
 		env = injected
 	}
+	injected, err = integration.ApplyBashInjection(env, opts.Shell)
+	if err != nil {
+		if opts.Logger != nil {
+			opts.Logger.Printf("bash integration inject: %v", err)
+		}
+	} else {
+		env = injected
+	}
+	cmd := exec.Command(opts.Shell, shellArgs(opts.Shell)...)
+	cmd.Dir = opts.Cwd
 	cmd.Env = env
 
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: opts.Cols, Rows: opts.Rows})
@@ -174,6 +183,16 @@ func Create(opts CreateOpts) (*Session, error) {
 	go s.readLoop()
 	go s.waitLoop()
 	return s, nil
+}
+
+func shellArgs(shell string) []string {
+	if filepath.Base(shell) == "bash" {
+		if rc, err := paths.BashRcfile(); err == nil {
+			// bash 3.2 requires GNU long options before short options.
+			return []string{"--rcfile", rc, "-i"}
+		}
+	}
+	return []string{"-il"}
 }
 
 func (s *Session) readLoop() {

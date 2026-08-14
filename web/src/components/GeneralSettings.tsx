@@ -57,7 +57,7 @@ export function GeneralSettings({ shell, onShellChange }: Props) {
         }}
       />
       <p id="settings-shell-hint" className="settings-field-hint">
-        新しいタブから適用されます
+        zsh / bash ではサイドバーのカレントディレクトリとコマンドがライブ更新されます。新しいタブから適用されます
       </p>
     </section>
   );

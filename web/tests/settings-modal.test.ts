@@ -197,11 +197,16 @@ test('shell field shows the current path, commits on blur and Enter, and skips u
     return GeneralSettings({ shell: '/bin/zsh', onShellChange });
   };
 
-  let input = findInput(render());
+  const tree = render();
+  let input = findInput(tree);
   assert.equal(input.value, '/bin/zsh');
   assert.match(input.placeholder, /\/bin\/zsh/);
   assert.match(input.placeholder, /\/bin\/bash/);
   assert.equal(input.className, 'settings-input');
+  const hint = walk(tree, (n) => n.type === 'p' && n.props?.id === 'settings-shell-hint');
+  assert.match(String(hint?.props?.children ?? ''), /zsh/);
+  assert.match(String(hint?.props?.children ?? ''), /bash/);
+  assert.match(String(hint?.props?.children ?? ''), /新しいタブ/);
 
   input.onBlur();
   await new Promise(setImmediate);

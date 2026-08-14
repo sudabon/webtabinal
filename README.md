@@ -98,12 +98,16 @@ make build
 
 ## シェル連携
 
-セッション起動時に zsh 統合を自動で読み込むため、`~/.zshrc` への追記は不要です。これによりタブのカレントディレクトリ・実行中コマンド・状態が更新されます。
+セッション起動時に zsh / bash 統合を自動で読み込むため、`~/.zshrc` や `~/.bashrc` への追記は不要です。これによりタブのカレントディレクトリ・実行中コマンド・状態が更新されます。
 
-他の端末でも同じスクリプトを使いたい場合のみ、次の 1 行を `~/.zshrc` に追加します。
+他の端末でも同じスクリプトを使いたい場合のみ、次の 1 行を追加します。
 
 ```zsh
 [[ -n "$WEBTABINAL_SESSION_ID" ]] && source "$HOME/Library/Application Support/WebTabinal/integration.zsh"
+```
+
+```bash
+[[ -n "$WEBTABINAL_SESSION_ID" ]] && source "$HOME/Library/Application Support/WebTabinal/integration.bash"
 ```
 
 ## LaunchAgent（任意: ログイン時の常駐）

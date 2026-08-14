@@ -21,6 +21,9 @@ var zshrcScript []byte
 //go:embed zdot/zlogin.zsh
 var zloginScript []byte
 
+//go:embed bash-inject/bashrc
+var bashrcScript []byte
+
 // ApplyZshInjection writes inject files and returns env that makes zsh load
 // WebTabinal OSC integration without a ~/.zshrc one-liner.
 func ApplyZshInjection(env []string, shell string) ([]string, error) {
@@ -64,6 +67,26 @@ func ApplyZshInjection(env []string, shell string) ([]string, error) {
 	), nil
 }
 
+// ApplyBashInjection writes inject files and returns env that makes bash load
+// WebTabinal OSC integration without a ~/.bashrc one-liner.
+func ApplyBashInjection(env []string, shell string) ([]string, error) {
+	if filepath.Base(shell) != "bash" {
+		return env, nil
+	}
+	if err := Write(); err != nil {
+		return env, err
+	}
+	integ, err := paths.BashIntegrationPath()
+	if err != nil {
+		return env, err
+	}
+	env = withoutKeys(env, "WEBTABINAL_INJECTION", "WEBTABINAL_INTEGRATION_PATH")
+	return append(env,
+		"WEBTABINAL_INJECTION=1",
+		"WEBTABINAL_INTEGRATION_PATH="+integ,
+	), nil
+}
+
 func writeInjectFiles() error {
 	dir, err := paths.ZshInjectDir()
 	if err != nil {
@@ -84,6 +107,28 @@ func writeInjectFiles() error {
 		}
 	}
 	return nil
+}
+
+func writeBashFiles() error {
+	path, err := paths.BashIntegrationPath()
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, bashScript, 0o644); err != nil {
+		return err
+	}
+	dir, err := paths.BashInjectDir()
+	if err != nil {
+		return err
+	}
+	if err := paths.EnsureDir(dir); err != nil {
+		return err
+	}
+	rc, err := paths.BashRcfile()
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(rc, bashrcScript, 0o644)
 }
 
 func withoutKeys(env []string, keys ...string) []string {
