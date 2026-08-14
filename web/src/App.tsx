@@ -6,6 +6,7 @@ import { Sidebar } from './components/Sidebar';
 import { TabMemoModal } from './components/TabMemoModal';
 import { TerminalView } from './components/TerminalView';
 import { useColorScheme } from './theme';
+import { agentWaitContent, shouldRaiseDesktopNotification } from './notify';
 import type { AppConfig, ColorScheme, ServerMsg, SessionInfo } from './types';
 import { cwdBasename, isStandalone, sessionBootstrapAction } from './util';
 import { TerminalSocket } from './ws';
@@ -87,11 +88,17 @@ export default function App() {
 
   const notifyCompletion = useCallback((sid: string, info: SessionInfo) => {
     const cfg = configRef.current;
-    if (!cfg?.notification.enabled) return;
+    if (!cfg) return;
     const active = activeRef.current === sid;
     const focused = focusedRef.current;
-    if (!cfg.notification.always && active && focused) return;
-    if (cfg.notification.min_duration_ms > 0 && (info.run_ms ?? 0) < cfg.notification.min_duration_ms) return;
+    if (!shouldRaiseDesktopNotification({
+      enabled: cfg.notification.enabled,
+      always: cfg.notification.always,
+      active,
+      focused,
+      minDurationMs: cfg.notification.min_duration_ms,
+      runMs: info.run_ms,
+    })) return;
 
     if (!active) {
       setUnread((prev) => new Set(prev).add(sid));
@@ -102,6 +109,33 @@ export default function App() {
       const title = `${ok ? '✓' : '✗'} ${info.command}${ok ? '' : ` (exit ${info.exit})`}`;
       const body = `${cwdBasename(info.cwd)} ・ ${Math.round((info.run_ms ?? 0) / 1000)}s`;
       const n = new Notification(title, { body });
+      n.onclick = () => {
+        window.focus();
+        setActiveId(sid);
+      };
+    }
+  }, []);
+
+  const notifyAgentWait = useCallback((sid: string, title: string, body: string) => {
+    const cfg = configRef.current;
+    if (!cfg) return;
+    const content = agentWaitContent(title, body, sessionsRef.current.find((s) => s.id === sid)?.command);
+    if (!content) return;
+    const active = activeRef.current === sid;
+    const focused = focusedRef.current;
+    if (!shouldRaiseDesktopNotification({
+      enabled: cfg.notification.enabled,
+      always: cfg.notification.always,
+      active,
+      focused,
+    })) return;
+
+    if (!active) {
+      setUnread((prev) => new Set(prev).add(sid));
+    }
+
+    if ('Notification' in window && Notification.permission === 'granted') {
+      const n = new Notification(content.title, { body: content.body });
       n.onclick = () => {
         window.focus();
         setActiveId(sid);
@@ -171,6 +205,9 @@ export default function App() {
             });
             return next;
           });
+        }
+        if (msg.t === 'notify') {
+          queueMicrotask(() => notifyAgentWait(msg.sid, msg.title, msg.body));
         }
         if (msg.t === 'error') {
           setActionError(msg.message);

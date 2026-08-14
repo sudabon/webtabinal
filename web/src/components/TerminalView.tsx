@@ -17,6 +17,7 @@ import {
 } from '../clipboard';
 import { openExternalLink, shouldUseWebglRenderer } from '../util';
 import { decodeB64Bytes, TerminalSocket } from '../ws';
+import { shouldForwardTerminalInput } from '../terminal-input';
 
 type Props = {
   sessionId: string | null;
@@ -31,6 +32,7 @@ export function TerminalView({ sessionId, socket, config, copyOnSelect, theme }:
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const attachedRef = useRef<string | null>(null);
+  const replayingRef = useRef(false);
   const socketRef = useRef(socket);
   socketRef.current = socket;
   const copyOnSelectRef = useRef(copyOnSelect);
@@ -66,7 +68,8 @@ export function TerminalView({ sessionId, socket, config, copyOnSelect, theme }:
 
     const onData = term.onData((data) => {
       const sid = attachedRef.current;
-      if (sid && socketRef.current) socketRef.current.input(sid, data);
+      if (!sid || !shouldForwardTerminalInput(sid, replayingRef.current)) return;
+      if (socketRef.current) socketRef.current.input(sid, data);
     });
 
     const onSel = term.onSelectionChange(() => {
@@ -114,6 +117,8 @@ export function TerminalView({ sessionId, socket, config, copyOnSelect, theme }:
     ro.observe(hostRef.current);
 
     return () => {
+      attachedRef.current = null;
+      replayingRef.current = true;
       onData.dispose();
       onSel.dispose();
       uninstallClipboard();
@@ -121,8 +126,9 @@ export function TerminalView({ sessionId, socket, config, copyOnSelect, theme }:
       term.dispose();
       termRef.current = null;
     };
+    // Recreate on session switch so queued writes/OSC replies cannot follow the new sid.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [sessionId]);
 
   useEffect(() => {
     const term = termRef.current;
@@ -142,7 +148,7 @@ export function TerminalView({ sessionId, socket, config, copyOnSelect, theme }:
   useEffect(() => {
     if (!sessionId || !socket || !termRef.current) return;
     attachedRef.current = sessionId;
-    termRef.current.reset();
+    replayingRef.current = true;
     fitRef.current?.fit();
     socket.attach(sessionId);
     if (termRef.current.cols && termRef.current.rows) {
@@ -156,6 +162,7 @@ export function TerminalView({ sessionId, socket, config, copyOnSelect, theme }:
       if (!term || !attachedRef.current) return;
       // Reconnect keeps the same socket/session refs; reset before replay is written.
       term.reset();
+      replayingRef.current = true;
     };
     window.addEventListener('webtabinal-ws-reconnect', onReconnect);
     return () => window.removeEventListener('webtabinal-ws-reconnect', onReconnect);
@@ -168,7 +175,15 @@ export function TerminalView({ sessionId, socket, config, copyOnSelect, theme }:
       if (!term || !attachedRef.current) return;
       if (msg.t === 'replay' && msg.sid === attachedRef.current) {
         const bytes = decodeB64Bytes(msg.data);
-        if (bytes.length > 0) term.write(bytes);
+        const sid = msg.sid;
+        const finishReplay = () => {
+          if (attachedRef.current === sid) replayingRef.current = false;
+        };
+        if (bytes.length > 0) {
+          term.write(bytes, msg.done ? finishReplay : undefined);
+        } else if (msg.done) {
+          term.write('', finishReplay);
+        }
       }
       if (msg.t === 'output' && msg.sid === attachedRef.current) {
         const bytes = decodeB64Bytes(msg.data);

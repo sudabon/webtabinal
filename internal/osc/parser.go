@@ -15,13 +15,18 @@ const (
 	EventCmdStart
 	EventCmdEnd
 	EventPrompt
+	EventNotify
+	EventColorQuery
 )
 
 type Event struct {
-	Kind     EventKind
-	CWD      string
-	Command  string
-	ExitCode *int
+	Kind         EventKind
+	CWD          string
+	Command      string
+	ExitCode     *int
+	Title        string
+	Body         string
+	ColorIndexes []int
 }
 
 // Parser scans a byte stream for OSC sequences and returns events.
@@ -94,6 +99,9 @@ func termLen(b []byte) int {
 }
 
 func parseOSC(payload string) (Event, bool) {
+	if ids, ok := parseColorQueries(payload); ok {
+		return Event{Kind: EventColorQuery, ColorIndexes: ids}, true
+	}
 	// OSC 7 ; file://...
 	if strings.HasPrefix(payload, "7;") {
 		raw := strings.TrimPrefix(payload, "7;")
@@ -136,7 +144,54 @@ func parseOSC(payload string) (Event, bool) {
 		}
 		return Event{Kind: EventCmdStart, Command: string(decoded)}, true
 	}
+	// OSC 99 ; [metadata;]payload  (Kitty desktop notification; check before OSC 9)
+	if strings.HasPrefix(payload, "99;") {
+		return parseOSC99(strings.TrimPrefix(payload, "99;"))
+	}
+	// OSC 9 ; message  (iTerm2 Growl)
+	if strings.HasPrefix(payload, "9;") {
+		body := strings.TrimPrefix(payload, "9;")
+		if strings.TrimSpace(body) == "" {
+			return Event{}, false
+		}
+		return Event{Kind: EventNotify, Body: body}, true
+	}
 	return Event{}, false
+}
+
+func parseOSC99(rest string) (Event, bool) {
+	metadata, text, found := strings.Cut(rest, ";")
+	if !found {
+		text = metadata
+		metadata = ""
+	}
+	params := parseKittyParams(metadata)
+	ev := Event{Kind: EventNotify}
+	switch params["p"] {
+	case "title":
+		ev.Title = text
+	default:
+		ev.Body = text
+	}
+	if strings.TrimSpace(ev.Title) == "" && strings.TrimSpace(ev.Body) == "" {
+		return Event{}, false
+	}
+	return ev, true
+}
+
+func parseKittyParams(metadata string) map[string]string {
+	out := map[string]string{}
+	if metadata == "" {
+		return out
+	}
+	for _, part := range strings.Split(metadata, ":") {
+		key, val, ok := strings.Cut(part, "=")
+		if !ok {
+			continue
+		}
+		out[key] = val
+	}
+	return out
 }
 
 func parseFileURL(raw string) string {

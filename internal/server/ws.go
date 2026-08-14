@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -247,8 +248,27 @@ func (h *Hub) flushAttachPending(c *wsClient, sid string) (overflowed bool) {
 	}
 }
 
-func (h *Hub) broadcastStateFromEvent(s *session.Session, _ osc.Event) {
+func (h *Hub) broadcastStateFromEvent(s *session.Session, ev osc.Event) {
+	if ev.Kind == osc.EventNotify {
+		h.broadcastNotify(s, ev)
+		return
+	}
 	h.broadcastState(s.Info())
+}
+
+func (h *Hub) broadcastNotify(s *session.Session, ev osc.Event) {
+	if strings.TrimSpace(ev.Title) == "" && strings.TrimSpace(ev.Body) == "" {
+		return
+	}
+	payload := map[string]any{
+		"t":     "notify",
+		"sid":   s.ID,
+		"title": ev.Title,
+		"body":  ev.Body,
+	}
+	for _, c := range h.clientSnapshot() {
+		h.send(c, payload)
+	}
 }
 
 func (h *Hub) broadcastStateFromExit(s *session.Session) {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io"
 	"log"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/sudabon/webtabinal/internal/config"
+	"github.com/sudabon/webtabinal/internal/osc"
 	"github.com/sudabon/webtabinal/internal/session"
 )
 
@@ -416,6 +418,50 @@ func TestSecurityUsesPortBoundAtServerCreation(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
+func TestBroadcastNotifyDoesNotRequireAttach(t *testing.T) {
+	c := &wsClient{
+		attach: map[string]bool{},
+		send:   make(chan []byte, 2),
+		quit:   make(chan struct{}),
+	}
+	h := &Hub{clients: map[*wsClient]struct{}{c: {}}}
+	s := &session.Session{ID: "session", State: session.StateRunning, Command: "codex"}
+
+	h.broadcastStateFromEvent(s, osc.Event{Kind: osc.EventNotify, Title: "Codex", Body: "needs approval"})
+
+	select {
+	case raw := <-c.send:
+		var msg map[string]any
+		if err := json.Unmarshal(raw, &msg); err != nil {
+			t.Fatal(err)
+		}
+		if msg["t"] != "notify" || msg["sid"] != "session" || msg["title"] != "Codex" || msg["body"] != "needs approval" {
+			t.Fatalf("notify frame = %#v", msg)
+		}
+	default:
+		t.Fatal("expected notify frame for unattached client")
+	}
+	if len(c.send) != 0 {
+		t.Fatal("unexpected extra WS frame on notify")
+	}
+}
+
+func TestBroadcastNotifySkipsEmpty(t *testing.T) {
+	c := &wsClient{
+		attach: map[string]bool{},
+		send:   make(chan []byte, 1),
+		quit:   make(chan struct{}),
+	}
+	h := &Hub{clients: map[*wsClient]struct{}{c: {}}}
+	s := &session.Session{ID: "session", State: session.StateRunning}
+
+	h.broadcastStateFromEvent(s, osc.Event{Kind: osc.EventNotify})
+
+	if len(c.send) != 0 {
+		t.Fatal("empty notify should not produce a WS frame")
 	}
 }
 
