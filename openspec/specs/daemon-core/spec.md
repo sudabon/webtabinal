@@ -15,7 +15,7 @@ The system SHALL provide a single Go binary named `webtabinal` that binds HTTP/W
 - **THEN** the embedded SPA assets are returned without requiring a separate static server
 
 ### Requirement: Config file with defaults
-The daemon SHALL create `~/Library/Application Support/WebTabinal/config.json` on first launch with documented defaults (port `8642`, shell, scrollback, ring buffer, font_family `Menlo, Monaco, 'Courier New', monospace`, font_size `14`, sidebar width, notification, confirm_close_running, copy_on_select, quit_when_no_tabs, close_tab_on_clean_exit) and load it on subsequent starts.
+The daemon SHALL create `~/Library/Application Support/WebTabinal/config.json` on first launch with documented defaults (port `8642`, shell, scrollback, ring buffer, font_family `Menlo, Monaco, 'Courier New', monospace`, font_size `14`, sidebar width, notification, confirm_close_running, copy_on_select, quit_when_no_tabs, close_tab_on_clean_exit, tab navigation key bindings defaulting to disabled with prefix `ctrl+j`, next `n`, previous `p`) and load it on subsequent starts. A config file written before the key binding keys existed SHALL load with those defaults filled in.
 
 #### Scenario: First launch creates config
 - **WHEN** the config file does not exist at startup
@@ -24,6 +24,14 @@ The daemon SHALL create `~/Library/Application Support/WebTabinal/config.json` o
 #### Scenario: Existing config is respected
 - **WHEN** the config file already exists
 - **THEN** the daemon uses its values for port, shell, font, and related settings
+
+#### Scenario: Older config gains key binding defaults
+- **WHEN** an existing config file has no key binding keys
+- **THEN** the daemon fills in the disabled default bindings and keeps every other stored value
+
+#### Scenario: Invalid key binding is rejected on patch
+- **WHEN** a config patch sets a prefix without a modifier, or the same key for next and previous
+- **THEN** the daemon rejects the patch with an error and the stored config is unchanged
 
 ### Requirement: LaunchAgent install and CLI
 The binary SHALL expose CLI subcommands `serve`, `install`, `uninstall`, `status`, and `open`. `install`/`uninstall` SHALL manage a launchd LaunchAgent labeled for WebTabinal with RunAtLoad and KeepAlive. LaunchAgent SHALL remain an optional way to keep the daemon running at login; the native desktop app SHALL be able to start `serve` without requiring a prior `install`.

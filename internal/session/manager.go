@@ -96,6 +96,7 @@ func (m *Manager) Create(cwd string) (*Session, error) {
 		Shell:           cfg.Shell,
 		Cwd:             cwd,
 		RingBufferBytes: cfg.RingBufferBytes,
+		Palette:         osc.PaletteFor(cfg.ResolvedTheme()),
 		Logger:          m.logger,
 		OnEvent: func(sess *Session, ev osc.Event) {
 			_, _, onEvent, _ := m.hooks()

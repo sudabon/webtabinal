@@ -19,6 +19,14 @@ test('xterm boosts cell contrast to WCAG AA so dark-on-black TUI text stays read
   assert.equal(dark.theme.background, '#1e1e1e');
 });
 
+test('xterm palette hex stays in sync with daemon OSC palette', () => {
+  const light = xtermViewOptions('light');
+  const dark = xtermViewOptions('dark');
+  const go = readFileSync(join(root, '..', 'internal/osc/color.go'), 'utf8');
+  assert.match(go, new RegExp(`Foreground: "${light.theme.foreground}".*Background: "${light.theme.background}"`));
+  assert.match(go, new RegExp(`Foreground: "${dark.theme.foreground}".*Background: "${dark.theme.background}"`));
+});
+
 test('TerminalView applies xtermViewOptions on create and theme change', () => {
   const view = readFileSync(join(root, 'src/components/TerminalView.tsx'), 'utf8');
   assert.match(view, /\.\.\.xtermViewOptions\(theme\)/);

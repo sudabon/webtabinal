@@ -180,6 +180,8 @@ make build
 | `close_tab_on_clean_exit` | `true`（Ctrl+D などでシェルが exit 0 のときタブを閉じる） |
 | 新しいタブ | `Cmd+N`（またはサイドバーの ＋） |
 | タブ切り替え | `Cmd+1` … `Cmd+9` |
+| 隣のタブへ移動 | 既定はオフ。設定 → キーボードで有効化。既定の割り当ては `Ctrl+J` のあと `n`（次）/ `p`（前） |
+| `key_bindings.enabled` | `false` |
 | 設定 | `~/Library/Application Support/WebTabinal/config.json`（32バイトのランダムな `auth_token` を含むため、共有・コミットしないでください） |
 | ログ | `~/Library/Logs/WebTabinal/daemon.log` |
 

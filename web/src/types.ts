@@ -1,3 +1,7 @@
+import type { KeyBindings } from './keymap';
+
+export type { KeyBindings };
+
 export type SessionState = 'starting' | 'idle' | 'running' | 'exited';
 
 export type SessionInfo = {
@@ -33,6 +37,7 @@ export type AppConfig = {
   copy_on_select: boolean;
   quit_when_no_tabs: boolean;
   close_tab_on_clean_exit: boolean;
+  key_bindings: KeyBindings;
 };
 
 export type ServerMsg =

@@ -471,6 +471,80 @@ body,
   border-color: var(--accent);
 }
 
+.settings-bindings {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.settings-binding-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.settings-binding {
+  min-width: 112px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--sidebar);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.settings-binding:hover {
+  border-color: var(--accent);
+}
+
+.settings-binding.recording {
+  border-color: var(--accent);
+  color: var(--muted);
+}
+
+.settings-field-error {
+  margin: 10px 0 0;
+  color: var(--danger-text);
+  font-size: 12px;
+}
+
+.settings-reset {
+  margin-top: 16px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.settings-reset:hover {
+  border-color: var(--accent);
+}
+
+.chord-pending {
+  position: fixed;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--sidebar);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  font-size: 12px;
+  box-shadow: 0 8px 24px var(--shadow);
+  pointer-events: none;
+}
+
 .memo-backdrop {
   position: fixed;
   inset: 0;

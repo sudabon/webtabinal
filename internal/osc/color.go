@@ -1,6 +1,75 @@
 package osc
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
+
+// Palette is the default xterm special colors (OSC 10/11/12).
+// Keep hex values in sync with web/src/theme.ts terminalTheme.
+type Palette struct {
+	Name       string
+	Foreground string
+	Background string
+	Cursor     string
+}
+
+func LightPalette() Palette {
+	return Palette{Name: "light", Foreground: "#333333", Background: "#ffffff", Cursor: "#000000"}
+}
+
+func DarkPalette() Palette {
+	return Palette{Name: "dark", Foreground: "#cccccc", Background: "#1e1e1e", Cursor: "#ffffff"}
+}
+
+func PaletteFor(theme string) Palette {
+	if theme == "light" {
+		return LightPalette()
+	}
+	return DarkPalette()
+}
+
+func (p Palette) Report(code int) []byte {
+	var hex string
+	switch code {
+	case 10:
+		hex = p.Foreground
+	case 11:
+		hex = p.Background
+	case 12:
+		hex = p.Cursor
+	default:
+		return nil
+	}
+	if hex == "" {
+		return nil
+	}
+	return []byte(fmt.Sprintf("\x1b]%d;rgb:%s\x07", code, xparseRGB(hex)))
+}
+
+func (p Palette) Reports(ids []int) []byte {
+	var out []byte
+	for _, id := range ids {
+		out = append(out, p.Report(id)...)
+	}
+	return out
+}
+
+func (p Palette) Env() []string {
+	if p.Name == "light" {
+		return []string{"TERM_THEME=light", "ANSI_LIGHT=1", "COLORFGBG=0;15"}
+	}
+	return []string{"TERM_THEME=dark", "COLORFGBG=15;0"}
+}
+
+func xparseRGB(hex string) string {
+	hex = strings.TrimPrefix(hex, "#")
+	if len(hex) != 6 {
+		return "0000/0000/0000"
+	}
+	r, g, b := hex[0:2], hex[2:4], hex[4:6]
+	return r + r + "/" + g + g + "/" + b + b
+}
 
 // FilterColorReports removes OSC 10/11/12 color reports unless allow returns true
 // for that color code. Other bytes, including unrelated OSC sequences, are kept.

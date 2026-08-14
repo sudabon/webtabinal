@@ -74,15 +74,36 @@ func TestWriteDropsUnsolicitedOSC11Report(t *testing.T) {
 	}
 }
 
-func TestWriteAllowsOSC11ReportAfterQuery(t *testing.T) {
+func TestColorQueryWritesThemeReportToPTY(t *testing.T) {
 	reader, writer, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer reader.Close()
-	s := &Session{pty: writer}
+	s := &Session{pty: writer, palette: osc.LightPalette()}
 	s.handleEvents(s.parser.Feed([]byte("\x1b]11;?\x07")))
-	report := []byte("\x1b]11;rgb:ffff/ffff/ffff\x1b\\")
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "\x1b]11;rgb:ffff/ffff/ffff\x07"
+	if string(got) != want {
+		t.Fatalf("PTY input = %q, want daemon OSC 11 report %q", got, want)
+	}
+}
+
+func TestWriteDropsXtermOSC11ReportAfterDaemonReply(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	s := &Session{pty: writer, palette: osc.LightPalette()}
+	s.handleEvents(s.parser.Feed([]byte("\x1b]11;?\x07")))
+	report := []byte("\x1b]11;rgb:0000/0000/0000\x1b\\")
 	if err := s.Write(report); err != nil {
 		t.Fatal(err)
 	}
@@ -93,8 +114,8 @@ func TestWriteAllowsOSC11ReportAfterQuery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != string(report) {
-		t.Fatalf("PTY input = %q, want allowed OSC 11 report", got)
+	if strings.Contains(string(got), "rgb:0000/0000/0000") {
+		t.Fatalf("PTY input = %q, want xterm OSC 11 report dropped", got)
 	}
 }
 
@@ -120,8 +141,8 @@ func TestWriteDropsDuplicateOSC11Report(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != string(report) {
-		t.Fatalf("PTY input = %q, want only the first OSC 11 report", got)
+	if strings.Count(string(got), "rgb:ffff/ffff/ffff") != 0 {
+		t.Fatalf("PTY input = %q, want xterm OSC 11 reports dropped", got)
 	}
 }
 
@@ -131,6 +152,20 @@ func TestColorQueryDoesNotEmitOnEvent(t *testing.T) {
 	s.handleEvents(s.parser.Feed([]byte("\x1b]11;?\x07")))
 	if called {
 		t.Fatal("color query should not broadcast session state")
+	}
+}
+
+func TestMergeThemeEnvReplacesColorHints(t *testing.T) {
+	got := mergeThemeEnv([]string{"COLORFGBG=15;0", "FOO=bar", "TERM_THEME=dark"}, osc.LightPalette())
+	joined := strings.Join(got, ",")
+	if !strings.Contains(joined, "FOO=bar") {
+		t.Fatalf("env = %#v, want FOO preserved", got)
+	}
+	if strings.Contains(joined, "COLORFGBG=15;0") || strings.Contains(joined, "TERM_THEME=dark") {
+		t.Fatalf("env = %#v, want old color hints removed", got)
+	}
+	if !strings.Contains(joined, "TERM_THEME=light") || !strings.Contains(joined, "COLORFGBG=0;15") {
+		t.Fatalf("env = %#v, want light theme hints", got)
 	}
 }
 

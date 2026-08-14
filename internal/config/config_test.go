@@ -121,6 +121,27 @@ func TestPatchColorScheme(t *testing.T) {
 	}
 }
 
+func TestResolvedThemeUsesExplicitScheme(t *testing.T) {
+	if got := (Config{ColorScheme: ColorSchemeLight}).ResolvedTheme(); got != ColorSchemeLight {
+		t.Fatalf("light = %q", got)
+	}
+	if got := (Config{ColorScheme: ColorSchemeDark}).ResolvedTheme(); got != ColorSchemeDark {
+		t.Fatalf("dark = %q", got)
+	}
+}
+
+func TestResolvedThemeSystemUsesAppearance(t *testing.T) {
+	t.Cleanup(func() { systemAppearance = macOSAppearance })
+	systemAppearance = func() string { return ColorSchemeDark }
+	if got := (Config{ColorScheme: ColorSchemeSystem}).ResolvedTheme(); got != ColorSchemeDark {
+		t.Fatalf("system = %q, want dark", got)
+	}
+	systemAppearance = func() string { return ColorSchemeLight }
+	if got := (Config{ColorScheme: ColorSchemeSystem}).ResolvedTheme(); got != ColorSchemeLight {
+		t.Fatalf("system = %q, want light", got)
+	}
+}
+
 func TestPatchInvalidColorSchemeKeepsStoredValue(t *testing.T) {
 	store := newTestStore(t)
 	if _, err := store.Patch(map[string]any{"color_scheme": ColorSchemeLight}); err != nil {
@@ -177,5 +198,117 @@ func TestPatchIgnoresAuthTokenRegardlessOfValueType(t *testing.T) {
 	}
 	if store.AuthToken() != token {
 		t.Fatal("auth_token changed")
+	}
+}
+
+func TestKeyBindingsDefaultsToDisabledChord(t *testing.T) {
+	got := Defaults().KeyBindings
+	if got.Enabled {
+		t.Fatal("Defaults().KeyBindings.Enabled = true, want false")
+	}
+	if got.Prefix != "ctrl+j" || got.NextTab != "n" || got.PrevTab != "p" {
+		t.Fatalf("Defaults().KeyBindings = %+v", got)
+	}
+
+	store := newTestStore(t)
+	stored := store.Public().KeyBindings
+	if stored.Enabled || stored.Prefix != "ctrl+j" || stored.NextTab != "n" || stored.PrevTab != "p" {
+		t.Fatalf("first-launch key_bindings = %+v", stored)
+	}
+}
+
+func TestOlderConfigGainsKeyBindingDefaults(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	support := filepath.Join(home, "Library", "Application Support", "WebTabinal")
+	if err := os.MkdirAll(support, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(support, "config.json"), []byte(`{"port":8642,"font_size":16}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := LoadOrCreate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := store.Public()
+	if got.FontSize != 16 {
+		t.Fatalf("font_size = %d, want 16", got.FontSize)
+	}
+	if got.KeyBindings.Enabled {
+		t.Fatal("migrated key_bindings.enabled = true, want false")
+	}
+	if got.KeyBindings.Prefix != "ctrl+j" || got.KeyBindings.NextTab != "n" || got.KeyBindings.PrevTab != "p" {
+		t.Fatalf("migrated key_bindings = %+v", got.KeyBindings)
+	}
+}
+
+func TestPatchRejectsInvalidKeyBindings(t *testing.T) {
+	store := newTestStore(t)
+	valid := map[string]any{
+		"enabled":  true,
+		"prefix":   "ctrl+j",
+		"next_tab": "n",
+		"prev_tab": "p",
+	}
+	if _, err := store.Patch(map[string]any{"key_bindings": valid}); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name  string
+		patch map[string]any
+	}{
+		{name: "prefix without modifier", patch: map[string]any{"prefix": "j"}},
+		{name: "equal next and prev", patch: map[string]any{"next_tab": "n", "prev_tab": "n"}},
+		{name: "escape prefix", patch: map[string]any{"prefix": "escape"}},
+		{name: "escape next", patch: map[string]any{"next_tab": "escape"}},
+		{name: "unparsable prefix", patch: map[string]any{"prefix": "Ctrl+J"}},
+		{name: "empty prefix", patch: map[string]any{"prefix": ""}},
+		{name: "wrong modifier order", patch: map[string]any{"prefix": "shift+ctrl+j"}},
+		{name: "reserved meta+n", patch: map[string]any{"prefix": "meta+n"}},
+		{name: "reserved meta+1", patch: map[string]any{"prefix": "meta+1"}},
+		{name: "reserved meta+c", patch: map[string]any{"prefix": "meta+c"}},
+		{name: "reserved meta+v", patch: map[string]any{"prefix": "meta+v"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := map[string]any{
+				"enabled":  true,
+				"prefix":   "ctrl+j",
+				"next_tab": "n",
+				"prev_tab": "p",
+			}
+			for k, v := range tt.patch {
+				body[k] = v
+			}
+			if _, err := store.Patch(map[string]any{"key_bindings": body}); err == nil {
+				t.Fatal("Patch returned nil error")
+			}
+			got := store.Public().KeyBindings
+			if !got.Enabled || got.Prefix != "ctrl+j" || got.NextTab != "n" || got.PrevTab != "p" {
+				t.Fatalf("stored key_bindings changed after rejection: %+v", got)
+			}
+		})
+	}
+}
+
+func TestPatchKeyBindingsAcceptsValidChord(t *testing.T) {
+	store := newTestStore(t)
+	got, err := store.Patch(map[string]any{
+		"key_bindings": map[string]any{
+			"enabled":  true,
+			"prefix":   "ctrl+shift+a",
+			"next_tab": "j",
+			"prev_tab": "k",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.KeyBindings.Enabled || got.KeyBindings.Prefix != "ctrl+shift+a" || got.KeyBindings.NextTab != "j" || got.KeyBindings.PrevTab != "k" {
+		t.Fatalf("patched key_bindings = %+v", got.KeyBindings)
 	}
 }

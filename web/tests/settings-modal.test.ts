@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 import react from '@vitejs/plugin-react';
 import { createServer } from 'vite';
 
+import { DEFAULT_KEY_BINDINGS, type KeyBindings } from '../src/keymap.ts';
+
 type StateSetter<T> = (next: T | ((current: T) => T)) => void;
 
 type TreeNode = {
@@ -126,6 +128,8 @@ async function loadComponents(t: { after: (fn: () => Promise<void> | void) => vo
       onColorSchemeChange: () => void;
       shell: string;
       onShellChange: (shell: string) => void | Promise<void>;
+      keyBindings: KeyBindings;
+      onKeyBindingsChange: (bindings: KeyBindings) => void | Promise<void>;
       onClose: () => void;
     }) => TreeNode | null;
   };
@@ -138,13 +142,19 @@ async function loadComponents(t: { after: (fn: () => Promise<void> | void) => vo
   const { AppearanceSettings } = await server.ssrLoadModule('/src/components/AppearanceSettings.tsx') as {
     AppearanceSettings: (props: unknown) => TreeNode;
   };
+  const { KeyboardSettings } = await server.ssrLoadModule('/src/components/KeyboardSettings.tsx') as {
+    KeyboardSettings: (props: {
+      bindings: KeyBindings;
+      onBindingsChange: (bindings: KeyBindings) => void | Promise<void>;
+    }) => TreeNode;
+  };
 
-  return { SettingsModal, GeneralSettings, AppearanceSettings };
+  return { SettingsModal, GeneralSettings, AppearanceSettings, KeyboardSettings };
 }
 
 test('settings modal opens on Appearance and can switch to General', async (t) => {
   const hooks = new HookHarness();
-  const { SettingsModal, AppearanceSettings, GeneralSettings } = await loadComponents(t, hooks);
+  const { SettingsModal, AppearanceSettings, GeneralSettings, KeyboardSettings } = await loadComponents(t, hooks);
 
   const props = {
     open: true,
@@ -152,6 +162,8 @@ test('settings modal opens on Appearance and can switch to General', async (t) =
     onColorSchemeChange: () => {},
     shell: '/bin/zsh',
     onShellChange: () => {},
+    keyBindings: DEFAULT_KEY_BINDINGS,
+    onKeyBindingsChange: () => {},
     onClose: () => {},
   };
 
@@ -162,7 +174,7 @@ test('settings modal opens on Appearance and can switch to General', async (t) =
   const navButtons = childrenOf(walk(tree, (n) => n.type === 'nav'));
   assert.deepEqual(
     navButtons.map((button) => (button as TreeNode).props?.children),
-    ['外観', '一般'],
+    ['外観', '一般', 'キーボード'],
   );
   assert.equal((navButtons[0] as TreeNode).props?.className, 'settings-nav-item active');
   assert.equal((navButtons[1] as TreeNode).props?.className, 'settings-nav-item');
@@ -182,6 +194,15 @@ test('settings modal opens on Appearance and can switch to General', async (t) =
   assert.equal(walk(tree, (n) => n.type === AppearanceSettings), undefined);
   const heading = walk(tree, (n) => n.type === 'h2');
   assert.equal(heading?.props?.children, '一般');
+
+  const keyboard = nextButtons[2] as TreeNode;
+  (keyboard.props?.onClick as () => void)();
+  hooks.beginRender();
+  tree = SettingsModal(props);
+  assert.ok(tree);
+  assert.ok(walk(tree, (n) => n.type === KeyboardSettings));
+  assert.equal(walk(tree, (n) => n.type === GeneralSettings), undefined);
+  assert.equal(walk(tree, (n) => n.type === 'h2')?.props?.children, 'キーボード');
 });
 
 test('shell field shows the current path, commits on blur and Enter, and skips unchanged values', async (t) => {
@@ -261,4 +282,107 @@ test('invalid shell path rolls back to the last persisted value', async (t) => {
 
   input = findInput(render());
   assert.equal(input.value, '/bin/zsh');
+});
+
+function findByAriaLabel(tree: unknown, label: string): TreeNode {
+  const node = walk(tree, (n) => n.props?.['aria-label'] === label);
+  assert.ok(node, `missing control labelled ${label}`);
+  return node;
+}
+
+function installKeyCapture() {
+  const listeners: Array<{ type: string; fn: (event: unknown) => void; capture: boolean }> = [];
+  const win = globalThis.window as {
+    addEventListener: (type: string, fn: (event: unknown) => void, opts?: boolean | { capture?: boolean }) => void;
+    removeEventListener: () => void;
+  };
+  win.addEventListener = (type, fn, opts) => {
+    listeners.push({
+      type,
+      fn,
+      capture: opts === true || (typeof opts === 'object' && !!opts.capture),
+    });
+  };
+  win.removeEventListener = () => {};
+  return listeners;
+}
+
+test('keyboard settings show current bindings, persist recording, roll back invalid keys, and reset', async (t) => {
+  const hooks = new HookHarness();
+  const { KeyboardSettings } = await loadComponents(t, hooks);
+  const listeners = installKeyCapture();
+  const committed: KeyBindings[] = [];
+  let persisted: KeyBindings = {
+    enabled: true,
+    prefix: 'ctrl+j',
+    next_tab: 'n',
+    prev_tab: 'p',
+  };
+  const onBindingsChange = (bindings: KeyBindings) => {
+    committed.push(bindings);
+    persisted = bindings;
+  };
+
+  const render = () => {
+    hooks.beginRender();
+    return KeyboardSettings({ bindings: persisted, onBindingsChange });
+  };
+
+  let tree = render();
+  assert.equal(findByAriaLabel(tree, 'プレフィックスキー').props?.children, 'Ctrl+J');
+  assert.equal(findByAriaLabel(tree, '次のタブ').props?.children, 'N');
+  assert.equal(findByAriaLabel(tree, '前のタブ').props?.children, 'P');
+  assert.equal(findByAriaLabel(tree, 'タブ移動ショートカット').props?.checked, true);
+
+  (findByAriaLabel(tree, '次のタブ').props?.onClick as () => void)();
+  tree = render();
+  for (const effect of hooks.effects) effect();
+  assert.equal(findByAriaLabel(tree, '次のタブ').props?.children, 'キーを入力…');
+  const capture = listeners.find((listener) => listener.type === 'keydown' && listener.capture);
+  assert.ok(capture, 'recording must install a capture listener');
+  capture.fn({
+    key: 'j',
+    ctrlKey: false,
+    altKey: false,
+    shiftKey: false,
+    metaKey: false,
+    isComposing: false,
+    keyCode: 0,
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  await new Promise(setImmediate);
+  tree = render();
+  assert.equal(findByAriaLabel(tree, '次のタブ').props?.children, 'J');
+  assert.deepEqual(committed, [{ enabled: true, prefix: 'ctrl+j', next_tab: 'j', prev_tab: 'p' }]);
+
+  (findByAriaLabel(tree, '前のタブ').props?.onClick as () => void)();
+  tree = render();
+  for (const effect of hooks.effects) effect();
+  const recapture = listeners.filter((listener) => listener.type === 'keydown' && listener.capture).at(-1);
+  recapture?.fn({
+    key: 'j',
+    ctrlKey: false,
+    altKey: false,
+    shiftKey: false,
+    metaKey: false,
+    isComposing: false,
+    keyCode: 0,
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  await new Promise(setImmediate);
+  tree = render();
+  assert.equal(findByAriaLabel(tree, '前のタブ').props?.children, 'P');
+  assert.equal(walk(tree, (n) => n.props?.role === 'alert')?.props?.children, '次タブと前タブに同じキーは使えません');
+  assert.equal(committed.length, 1);
+
+  (findByAriaLabel(tree, 'キー割り当てをリセット').props?.onClick as () => void)();
+  await new Promise(setImmediate);
+  tree = render();
+  assert.equal(findByAriaLabel(tree, 'プレフィックスキー').props?.children, 'Ctrl+J');
+  assert.equal(findByAriaLabel(tree, '次のタブ').props?.children, 'N');
+  assert.equal(findByAriaLabel(tree, '前のタブ').props?.children, 'P');
+  assert.equal(findByAriaLabel(tree, 'タブ移動ショートカット').props?.checked, true);
+  assert.deepEqual(committed.at(-1), { enabled: true, prefix: 'ctrl+j', next_tab: 'n', prev_tab: 'p' });
 });

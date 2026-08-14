@@ -57,6 +57,7 @@ type Session struct {
 	closed   bool
 
 	colorQueries map[int]int
+	palette      osc.Palette
 }
 
 type Info struct {
@@ -115,6 +116,7 @@ type CreateOpts struct {
 	OnExit          func(*Session)
 	OnOutput        func(*Session, []byte)
 	Logger          *log.Logger
+	Palette         osc.Palette
 }
 
 func Create(opts CreateOpts) (*Session, error) {
@@ -135,11 +137,15 @@ func Create(opts CreateOpts) (*Session, error) {
 		opts.Rows = 40
 	}
 
+	if opts.Palette.Name == "" {
+		opts.Palette = osc.DarkPalette()
+	}
+
 	id := uuid.NewString()
-	env := append(os.Environ(),
+	env := mergeThemeEnv(append(os.Environ(),
 		fmt.Sprintf("WEBTABINAL_SESSION_ID=%s", id),
 		"TERM=xterm-256color",
-	)
+	), opts.Palette)
 	injected, err := integration.ApplyZshInjection(env, opts.Shell)
 	if err != nil {
 		if opts.Logger != nil {
@@ -180,6 +186,7 @@ func Create(opts CreateOpts) (*Session, error) {
 		onOutput: opts.OnOutput,
 		logger:   opts.Logger,
 		done:     make(chan struct{}),
+		palette:  opts.Palette,
 	}
 
 	go s.readLoop()
@@ -243,7 +250,7 @@ func (s *Session) waitLoop() {
 func (s *Session) handleEvents(events []osc.Event) {
 	for _, ev := range events {
 		if ev.Kind == osc.EventColorQuery {
-			s.noteColorQueries(ev.ColorIndexes)
+			s.replyColorQueries(ev.ColorIndexes)
 			continue
 		}
 		s.applyEvent(ev)
@@ -251,6 +258,38 @@ func (s *Session) handleEvents(events []osc.Event) {
 			s.onEvent(s, ev)
 		}
 	}
+}
+
+func (s *Session) replyColorQueries(ids []int) {
+	report := s.palette.Reports(ids)
+	if len(report) == 0 {
+		return
+	}
+	s.mu.Lock()
+	ptmx := s.pty
+	closed := s.closed
+	s.mu.Unlock()
+	if closed || ptmx == nil {
+		return
+	}
+	_, _ = ptmx.Write(report)
+}
+
+func mergeThemeEnv(env []string, p osc.Palette) []string {
+	skip := map[string]bool{
+		"TERM_THEME": true,
+		"ANSI_LIGHT": true,
+		"COLORFGBG":  true,
+	}
+	out := make([]string, 0, len(env)+3)
+	for _, e := range env {
+		key, _, _ := strings.Cut(e, "=")
+		if skip[key] {
+			continue
+		}
+		out = append(out, e)
+	}
+	return append(out, p.Env()...)
 }
 
 func (s *Session) applyEvent(ev osc.Event) {
@@ -306,20 +345,6 @@ func (s *Session) Write(data []byte) error {
 	}
 	_, err := ptmx.Write(filtered)
 	return err
-}
-
-func (s *Session) noteColorQueries(ids []int) {
-	if len(ids) == 0 {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.colorQueries == nil {
-		s.colorQueries = map[int]int{}
-	}
-	for _, id := range ids {
-		s.colorQueries[id]++
-	}
 }
 
 func (s *Session) consumeColorQuery(code int) bool {

@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ColorScheme } from '../types';
+import type { ColorScheme, KeyBindings } from '../types';
 import { AppearanceSettings } from './AppearanceSettings';
 import { GeneralSettings } from './GeneralSettings';
+import { KeyboardSettings } from './KeyboardSettings';
 
 const CATEGORIES = [
   { id: 'appearance', label: '外観' },
   { id: 'general', label: '一般' },
+  { id: 'keyboard', label: 'キーボード' },
 ] as const;
 
 type CategoryId = (typeof CATEGORIES)[number]['id'];
@@ -16,6 +18,8 @@ type Props = {
   onColorSchemeChange: (scheme: ColorScheme) => void;
   shell: string;
   onShellChange: (shell: string) => void | Promise<void>;
+  keyBindings: KeyBindings;
+  onKeyBindingsChange: (bindings: KeyBindings) => void | Promise<void>;
   onClose: () => void;
 };
 
@@ -25,6 +29,8 @@ export function SettingsModal({
   onColorSchemeChange,
   shell,
   onShellChange,
+  keyBindings,
+  onKeyBindingsChange,
   onClose,
 }: Props) {
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -85,8 +91,10 @@ export function SettingsModal({
           </header>
           {category === 'appearance' ? (
             <AppearanceSettings colorScheme={colorScheme} onColorSchemeChange={onColorSchemeChange} />
-          ) : (
+          ) : category === 'general' ? (
             <GeneralSettings shell={shell} onShellChange={onShellChange} />
+          ) : (
+            <KeyboardSettings bindings={keyBindings} onBindingsChange={onKeyBindingsChange} />
           )}
           <footer className="settings-footer">
             <button ref={closeButtonRef} className="settings-close" type="button" onClick={onClose}>

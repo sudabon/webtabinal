@@ -6,6 +6,8 @@ export type ResolvedTheme = 'light' | 'dark';
 const DARK_QUERY = '(prefers-color-scheme: dark)';
 
 // Terminal palette per theme. Backgrounds mirror --bg in index.css.
+// Hex values must stay in sync with internal/osc LightPalette/DarkPalette
+// (daemon OSC 10/11/12 replies and TERM_THEME/COLORFGBG).
 export const terminalTheme: Record<ResolvedTheme, {
   background: string;
   foreground: string;

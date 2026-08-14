@@ -135,3 +135,49 @@ func TestFilterColorReportsLeavesPlainInput(t *testing.T) {
 		t.Fatalf("filtered = %q, want unchanged", got)
 	}
 }
+
+func TestLightPaletteReportsMatchXParseColor(t *testing.T) {
+	p := osc.LightPalette()
+	got := string(p.Reports([]int{10, 11, 12}))
+	want := "\x1b]10;rgb:3333/3333/3333\x07" +
+		"\x1b]11;rgb:ffff/ffff/ffff\x07" +
+		"\x1b]12;rgb:0000/0000/0000\x07"
+	if got != want {
+		t.Fatalf("reports = %q, want %q", got, want)
+	}
+}
+
+func TestDarkPaletteReportsMatchXParseColor(t *testing.T) {
+	p := osc.DarkPalette()
+	got := string(p.Reports([]int{11}))
+	want := "\x1b]11;rgb:1e1e/1e1e/1e1e\x07"
+	if got != want {
+		t.Fatalf("reports = %q, want %q", got, want)
+	}
+}
+
+func TestLightPaletteEnvHintsLightTheme(t *testing.T) {
+	got := osc.LightPalette().Env()
+	want := []string{"TERM_THEME=light", "ANSI_LIGHT=1", "COLORFGBG=0;15"}
+	if len(got) != len(want) {
+		t.Fatalf("env = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("env = %#v, want %#v", got, want)
+		}
+	}
+}
+
+func TestDarkPaletteEnvHintsDarkTheme(t *testing.T) {
+	got := osc.DarkPalette().Env()
+	want := []string{"TERM_THEME=dark", "COLORFGBG=15;0"}
+	if len(got) != len(want) {
+		t.Fatalf("env = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("env = %#v, want %#v", got, want)
+		}
+	}
+}

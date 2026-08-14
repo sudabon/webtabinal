@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/sudabon/webtabinal/internal/paths"
@@ -18,6 +20,13 @@ type NotificationConfig struct {
 	Always        bool `json:"always"`
 	MinDurationMs int  `json:"min_duration_ms"`
 	Sound         bool `json:"sound"`
+}
+
+type KeyBindingsConfig struct {
+	Enabled bool   `json:"enabled"`
+	Prefix  string `json:"prefix"`
+	NextTab string `json:"next_tab"`
+	PrevTab string `json:"prev_tab"`
 }
 
 // Color scheme values accepted by Config.ColorScheme.
@@ -41,6 +50,7 @@ type Config struct {
 	CopyOnSelect        bool               `json:"copy_on_select"`
 	QuitWhenNoTabs      bool               `json:"quit_when_no_tabs"`
 	CloseTabOnCleanExit bool               `json:"close_tab_on_clean_exit"`
+	KeyBindings         KeyBindingsConfig  `json:"key_bindings"`
 	AuthToken           string             `json:"auth_token"`
 }
 
@@ -64,6 +74,12 @@ func Defaults() Config {
 		CopyOnSelect:        false,
 		QuitWhenNoTabs:      true,
 		CloseTabOnCleanExit: true,
+		KeyBindings: KeyBindingsConfig{
+			Enabled: false,
+			Prefix:  "ctrl+j",
+			NextTab: "n",
+			PrevTab: "p",
+		},
 	}
 }
 
@@ -146,6 +162,15 @@ func (s *Store) applyDefaults() {
 	case ColorSchemeLight, ColorSchemeDark, ColorSchemeSystem:
 	default:
 		s.cfg.ColorScheme = d.ColorScheme
+	}
+	if s.cfg.KeyBindings.Prefix == "" {
+		s.cfg.KeyBindings.Prefix = d.KeyBindings.Prefix
+	}
+	if s.cfg.KeyBindings.NextTab == "" {
+		s.cfg.KeyBindings.NextTab = d.KeyBindings.NextTab
+	}
+	if s.cfg.KeyBindings.PrevTab == "" {
+		s.cfg.KeyBindings.PrevTab = d.KeyBindings.PrevTab
 	}
 }
 
@@ -233,6 +258,89 @@ func validate(cfg Config) error {
 	if cfg.Notification.MinDurationMs < 0 {
 		return fmt.Errorf("notification.min_duration_ms must be non-negative")
 	}
+	if err := validateKeyBindings(cfg.KeyBindings); err != nil {
+		return err
+	}
+	return nil
+}
+
+var reservedPrefixes = map[string]struct{}{
+	"meta+1": {}, "meta+2": {}, "meta+3": {}, "meta+4": {}, "meta+5": {},
+	"meta+6": {}, "meta+7": {}, "meta+8": {}, "meta+9": {},
+	"meta+n": {}, "meta+c": {}, "meta+v": {},
+}
+
+var modifierOrder = []string{"ctrl", "alt", "shift", "meta"}
+
+func parseBinding(spec string) (mods []string, key string, ok bool) {
+	if spec == "" || spec != strings.ToLower(spec) {
+		return nil, "", false
+	}
+	parts := strings.Split(spec, "+")
+	for _, part := range parts {
+		if part == "" {
+			return nil, "", false
+		}
+	}
+	key = parts[len(parts)-1]
+	mods = parts[:len(parts)-1]
+	last := -1
+	seen := make(map[string]struct{}, len(mods))
+	for _, mod := range mods {
+		idx := -1
+		for i, name := range modifierOrder {
+			if mod == name {
+				idx = i
+				break
+			}
+		}
+		if idx < 0 {
+			return nil, "", false
+		}
+		if _, dup := seen[mod]; dup {
+			return nil, "", false
+		}
+		if idx <= last {
+			return nil, "", false
+		}
+		seen[mod] = struct{}{}
+		last = idx
+	}
+	for _, name := range modifierOrder {
+		if key == name {
+			return nil, "", false
+		}
+	}
+	return mods, key, true
+}
+
+func validateKeyBindings(kb KeyBindingsConfig) error {
+	type slot struct {
+		name string
+		spec string
+	}
+	for _, s := range []slot{
+		{name: "prefix", spec: kb.Prefix},
+		{name: "next_tab", spec: kb.NextTab},
+		{name: "prev_tab", spec: kb.PrevTab},
+	} {
+		mods, key, ok := parseBinding(s.spec)
+		if !ok {
+			return fmt.Errorf("key_bindings.%s is invalid", s.name)
+		}
+		if key == "escape" {
+			return fmt.Errorf("key_bindings must not use escape")
+		}
+		if s.name == "prefix" && len(mods) == 0 {
+			return fmt.Errorf("key_bindings.prefix must include a modifier")
+		}
+	}
+	if kb.NextTab == kb.PrevTab {
+		return fmt.Errorf("key_bindings.next_tab and prev_tab must differ")
+	}
+	if _, hit := reservedPrefixes[kb.Prefix]; hit {
+		return fmt.Errorf("key_bindings.prefix conflicts with an existing shortcut")
+	}
 	return nil
 }
 
@@ -242,6 +350,25 @@ func (s *Store) saveLocked() error {
 		return err
 	}
 	return os.WriteFile(s.path, append(data, '\n'), 0o600)
+}
+
+func (c Config) ResolvedTheme() string {
+	switch c.ColorScheme {
+	case ColorSchemeLight, ColorSchemeDark:
+		return c.ColorScheme
+	default:
+		return systemAppearance()
+	}
+}
+
+var systemAppearance = macOSAppearance
+
+func macOSAppearance() string {
+	out, err := exec.Command("defaults", "read", "-g", "AppleInterfaceStyle").Output()
+	if err == nil && strings.EqualFold(strings.TrimSpace(string(out)), "Dark") {
+		return ColorSchemeDark
+	}
+	return ColorSchemeLight
 }
 
 func randomToken() (string, error) {

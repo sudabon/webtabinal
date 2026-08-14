@@ -1,10 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api';
 import { bootErrorMessage, loadInitialConfig } from './boot';
+import { isTextFieldElement } from './clipboard';
 import { SettingsModal } from './components/SettingsModal';
 import { Sidebar } from './components/Sidebar';
 import { TabMemoModal } from './components/TabMemoModal';
 import { TerminalView } from './components/TerminalView';
+import {
+  CHORD_TIMEOUT_MS,
+  DEFAULT_KEY_BINDINGS,
+  formatBinding,
+  neighbourTabIndex,
+  normalizeKeyEvent,
+  resolveChordKey,
+  type KeyBindings,
+} from './keymap';
 import { useColorScheme } from './theme';
 import { agentWaitContent, shouldRaiseDesktopNotification } from './notify';
 import type { AppConfig, ColorScheme, ServerMsg, SessionInfo } from './types';
@@ -23,6 +33,7 @@ export default function App() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [memoSessionId, setMemoSessionId] = useState<string | null>(null);
+  const [pendingPrefix, setPendingPrefix] = useState(false);
   const [focusSeq, setFocusSeq] = useState(0);
   const prevCount = useRef<number | null>(null);
   const bootstrapped = useRef(false);
@@ -34,6 +45,12 @@ export default function App() {
   const configRef = useRef(config);
   configRef.current = config;
   const focusedRef = useRef(document.hasFocus());
+  const settingsOpenRef = useRef(settingsOpen);
+  settingsOpenRef.current = settingsOpen;
+  const memoOpenRef = useRef(memoSessionId != null);
+  memoOpenRef.current = memoSessionId != null;
+  const pendingPrefixRef = useRef(false);
+  const pendingTimerRef = useRef(0);
   const colorSchemeRequest = useRef(0);
   const lastSuccessColorSchemeRequest = useRef(0);
   const lastCommittedColorScheme = useRef<ColorScheme | undefined>(undefined);
@@ -53,16 +70,39 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [actionError]);
 
+  const clearPending = useCallback(() => {
+    if (pendingTimerRef.current) {
+      window.clearTimeout(pendingTimerRef.current);
+      pendingTimerRef.current = 0;
+    }
+    pendingPrefixRef.current = false;
+    setPendingPrefix(false);
+  }, []);
+
+  const armPending = useCallback(() => {
+    if (pendingTimerRef.current) window.clearTimeout(pendingTimerRef.current);
+    pendingPrefixRef.current = true;
+    setPendingPrefix(true);
+    pendingTimerRef.current = window.setTimeout(() => {
+      pendingTimerRef.current = 0;
+      pendingPrefixRef.current = false;
+      setPendingPrefix(false);
+    }, CHORD_TIMEOUT_MS);
+  }, []);
+
   useEffect(() => {
     const onFocus = () => { focusedRef.current = true; };
-    const onBlur = () => { focusedRef.current = false; };
+    const onBlur = () => {
+      focusedRef.current = false;
+      clearPending();
+    };
     window.addEventListener('focus', onFocus);
     window.addEventListener('blur', onBlur);
     return () => {
       window.removeEventListener('focus', onFocus);
       window.removeEventListener('blur', onBlur);
     };
-  }, []);
+  }, [clearPending]);
 
   useEffect(() => {
     if ('setAppBadge' in navigator) {
@@ -320,6 +360,40 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [settingsOpen]);
 
+  useEffect(() => {
+    if (settingsOpen || memoSessionId != null) clearPending();
+  }, [settingsOpen, memoSessionId, clearPending]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const bindings = configRef.current?.key_bindings;
+      if (!bindings?.enabled) return;
+      if (settingsOpenRef.current || memoOpenRef.current) return;
+      if (isTextFieldElement(document.activeElement)) return;
+
+      const spec = normalizeKeyEvent(e);
+      const result = resolveChordKey(pendingPrefixRef.current, spec, bindings);
+      if (result.action === 'none') return;
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (result.action === 'arm') {
+        armPending();
+        return;
+      }
+      clearPending();
+      if (result.action !== 'next' && result.action !== 'prev') return;
+      const list = sessionsRef.current;
+      const activeIndex = list.findIndex((s) => s.id === activeRef.current);
+      const nextIndex = neighbourTabIndex(list.length, activeIndex, result.action);
+      const target = nextIndex >= 0 ? list[nextIndex] : undefined;
+      if (target) select(target.id);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [armPending, clearPending]);
+
   const width = config?.sidebar_width ?? 240;
 
   const onResizeWidth = useMemo(
@@ -373,6 +447,19 @@ export default function App() {
     async (shell: string) => {
       try {
         const next = await api.patchConfig({ shell });
+        setConfig(next);
+      } catch (err) {
+        reportActionError(err);
+        throw err;
+      }
+    },
+    [reportActionError],
+  );
+
+  const changeKeyBindings = useCallback(
+    async (key_bindings: KeyBindings) => {
+      try {
+        const next = await api.patchConfig({ key_bindings });
         setConfig(next);
       } catch (err) {
         reportActionError(err);
@@ -455,12 +542,19 @@ export default function App() {
           memoOpen={memoSessionId != null}
         />
       </main>
+      {pendingPrefix && (
+        <div className="chord-pending" role="status">
+          {formatBinding((config?.key_bindings ?? DEFAULT_KEY_BINDINGS).prefix)} …
+        </div>
+      )}
       <SettingsModal
         open={settingsOpen}
         colorScheme={config?.color_scheme ?? 'system'}
         onColorSchemeChange={(scheme) => void changeColorScheme(scheme)}
         shell={config?.shell ?? '/bin/zsh'}
         onShellChange={changeShell}
+        keyBindings={config?.key_bindings ?? DEFAULT_KEY_BINDINGS}
+        onKeyBindingsChange={changeKeyBindings}
         onClose={() => setSettingsOpen(false)}
       />
       <TabMemoModal

@@ -6,6 +6,7 @@ import react from '@vitejs/plugin-react';
 import { createServer, type Plugin } from 'vite';
 
 import type { AppConfig, ColorScheme } from '../src/types.ts';
+import { DEFAULT_KEY_BINDINGS, type KeyBindings } from '../src/keymap.ts';
 
 type StateSetter<T> = (next: T | ((current: T) => T)) => void;
 
@@ -63,7 +64,7 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function appConfig(colorScheme: ColorScheme): AppConfig {
+function appConfig(colorScheme: ColorScheme, keyBindings: KeyBindings = DEFAULT_KEY_BINDINGS): AppConfig {
   return {
     port: 8642,
     shell: '/bin/zsh',
@@ -78,10 +79,11 @@ function appConfig(colorScheme: ColorScheme): AppConfig {
     copy_on_select: false,
     quit_when_no_tabs: true,
     close_tab_on_clean_exit: false,
+    key_bindings: keyBindings,
   };
 }
 
-function mockModules(hooks: HookHarness, api: object): Plugin {
+function mockModules(hooks: HookHarness, api: object, emitSessions = false): Plugin {
   const modules = new Map([
     ['./api', 'export const api = globalThis.__webtabinalAppTest.api;'],
     ['./boot', `
@@ -106,7 +108,24 @@ function mockModules(hooks: HookHarness, api: object): Plugin {
       export function isStandalone() { return false; }
       export function sessionBootstrapAction() { return { type: 'none' }; }
     `],
-    ['./ws', `
+    ['./ws', emitSessions
+      ? `
+      export class TerminalSocket {
+        constructor(opts) {
+          opts.onMessage({
+            t: 'sessions',
+            list: [
+              { id: 'a', order: 0, cwd: '/', command: 'zsh', state: 'idle', exit: null, integrated: true, memo: '' },
+              { id: 'b', order: 1, cwd: '/', command: 'zsh', state: 'idle', exit: null, integrated: true, memo: '' },
+              { id: 'c', order: 2, cwd: '/', command: 'zsh', state: 'idle', exit: null, integrated: true, memo: '' },
+            ],
+          });
+        }
+        attach() {}
+        close() {}
+      }
+    `
+      : `
       export class TerminalSocket {
         close() {}
       }
@@ -445,4 +464,164 @@ test('failed shell patch rolls back and shows the action-error toast', async (t)
     Array.isArray(view.toast?.children) ? view.toast.children[0] : view.toast?.children,
     'shell must be an absolute path',
   );
+});
+
+type Listener = {
+  type: string;
+  fn: (event: unknown) => void;
+  capture: boolean;
+};
+
+function keyEvent(init: { key: string; ctrlKey?: boolean; metaKey?: boolean }) {
+  const event = {
+    key: init.key,
+    ctrlKey: !!init.ctrlKey,
+    altKey: false,
+    shiftKey: false,
+    metaKey: !!init.metaKey,
+    isComposing: false,
+    keyCode: 0,
+    defaultPrevented: false,
+    stopped: false,
+    preventDefault() {
+      event.defaultPrevented = true;
+    },
+    stopPropagation() {
+      event.stopped = true;
+    },
+  };
+  return event;
+}
+
+async function bootChordApp(
+  t: { after: (fn: () => Promise<void> | void) => void },
+  keyBindings: KeyBindings,
+  activeElement: { tagName?: string; className?: string } | null = null,
+) {
+  const hooks = new HookHarness();
+  const api = {
+    getConfig: async () => appConfig('system', keyBindings),
+    patchConfig: async (patch: Partial<AppConfig>) => ({ ...appConfig('system', keyBindings), ...patch }),
+  };
+  const listeners: Listener[] = [];
+  const server = await createServer({
+    configFile: false,
+    logLevel: 'silent',
+    plugins: [mockModules(hooks, api, true), react()],
+    resolve: {
+      alias: [
+        { find: /^react$/, replacement: fileURLToPath(new URL('./app-react-mock.ts', import.meta.url)) },
+        { find: /^react\/jsx-dev-runtime$/, replacement: fileURLToPath(new URL('./app-react-mock.ts', import.meta.url)) },
+        { find: /^react\/jsx-runtime$/, replacement: fileURLToPath(new URL('./app-react-mock.ts', import.meta.url)) },
+      ],
+    },
+    server: { middlewareMode: true },
+  });
+  t.after(async () => {
+    await server.close();
+  });
+
+  Object.assign(globalThis, {
+    document: { hasFocus: () => true, title: '', activeElement },
+    window: {
+      addEventListener: (type: string, fn: (event: unknown) => void, opts?: boolean | { capture?: boolean }) => {
+        listeners.push({
+          type,
+          fn,
+          capture: opts === true || (typeof opts === 'object' && !!opts.capture),
+        });
+      },
+      removeEventListener: () => {},
+      dispatchEvent: () => true,
+      setTimeout,
+      clearTimeout,
+      close: () => {},
+    },
+  });
+
+  const { default: App } = await server.ssrLoadModule('/src/App.tsx') as {
+    default: () => { props: { children: Array<{ props?: Record<string, unknown>; type?: unknown } | false | null> } };
+  };
+  const render = () => {
+    hooks.beginRender();
+    const tree = App();
+    const children = (tree.props.children as Array<{ props?: Record<string, unknown> } | false | null>)
+      .filter((child): child is { props: Record<string, unknown> } => !!child && typeof child === 'object' && !!child.props);
+    const sidebar = children.find((child) => 'sessions' in child.props);
+    const pending = children.find((child) => child.props.className === 'chord-pending');
+    return {
+      activeId: sidebar?.props.activeId as string | null | undefined,
+      sessions: sidebar?.props.sessions as Array<{ id: string }> | undefined,
+      onOpenSettings: sidebar?.props.onOpenSettings as (() => void) | undefined,
+      pending: pending?.props.children,
+    };
+  };
+
+  render();
+  for (const effect of hooks.effects) effect();
+  await new Promise(setImmediate);
+  const view = render();
+  const capture = listeners.filter((listener) => listener.type === 'keydown' && listener.capture);
+  assert.equal(capture.length, 1, 'expected one capture-phase keydown listener');
+  return { render, capture: capture[0].fn, view };
+}
+
+test('enabled prefix chord is consumed and moves to the neighbouring session', async (t) => {
+  const enabled = { ...DEFAULT_KEY_BINDINGS, enabled: true };
+  const { render, capture } = await bootChordApp(t, enabled);
+
+  const prefix = keyEvent({ key: 'j', ctrlKey: true });
+  capture(prefix);
+  assert.equal(prefix.defaultPrevented, true);
+  assert.equal(prefix.stopped, true);
+  let view = render();
+  assert.match(String(view.pending), /Ctrl\+J/);
+  assert.equal(view.activeId, 'a');
+
+  const next = keyEvent({ key: 'n' });
+  capture(next);
+  assert.equal(next.defaultPrevented, true);
+  view = render();
+  assert.equal(view.activeId, 'b');
+  assert.equal(view.pending, undefined);
+
+  capture(keyEvent({ key: 'j', ctrlKey: true }));
+  const prev = keyEvent({ key: 'p' });
+  capture(prev);
+  view = render();
+  assert.equal(view.activeId, 'a');
+});
+
+test('unbound key after the prefix cancels without moving tabs', async (t) => {
+  const { render, capture } = await bootChordApp(t, { ...DEFAULT_KEY_BINDINGS, enabled: true });
+  capture(keyEvent({ key: 'j', ctrlKey: true }));
+  const unbound = keyEvent({ key: 'x' });
+  capture(unbound);
+  assert.equal(unbound.defaultPrevented, true);
+  const view = render();
+  assert.equal(view.activeId, 'a');
+  assert.equal(view.pending, undefined);
+});
+
+test('disabled bindings forward the prefix key', async (t) => {
+  const { capture } = await bootChordApp(t, DEFAULT_KEY_BINDINGS);
+  const prefix = keyEvent({ key: 'j', ctrlKey: true });
+  capture(prefix);
+  assert.equal(prefix.defaultPrevented, false);
+  assert.equal(prefix.stopped, false);
+});
+
+test('chord listener is inert while settings are open or a text field is focused', async (t) => {
+  const enabled = { ...DEFAULT_KEY_BINDINGS, enabled: true };
+  const modal = await bootChordApp(t, enabled);
+  modal.view.onOpenSettings?.();
+  modal.render();
+  const prefix = keyEvent({ key: 'j', ctrlKey: true });
+  modal.capture(prefix);
+  assert.equal(prefix.defaultPrevented, false);
+
+  const field = await bootChordApp(t, enabled, { tagName: 'INPUT' });
+  const typed = keyEvent({ key: 'j', ctrlKey: true });
+  field.capture(typed);
+  assert.equal(typed.defaultPrevented, false);
 });
