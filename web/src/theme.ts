@@ -26,6 +26,17 @@ export const terminalTheme: Record<ResolvedTheme, {
   },
 };
 
+// WCAG AA. TUI apps often paint a black cell with the default (dark) foreground
+// on a light terminal; xterm.js then lifts the fg just enough to stay readable.
+export const TERMINAL_MIN_CONTRAST_RATIO = 4.5;
+
+export function xtermViewOptions(theme: ResolvedTheme) {
+  return {
+    theme: terminalTheme[theme],
+    minimumContrastRatio: TERMINAL_MIN_CONTRAST_RATIO,
+  };
+}
+
 export function systemTheme(): ResolvedTheme {
   return window.matchMedia(DARK_QUERY).matches ? 'dark' : 'light';
 }
