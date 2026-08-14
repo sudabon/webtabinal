@@ -110,6 +110,41 @@ make build
 [[ -n "$WEBTABINAL_SESSION_ID" ]] && source "$HOME/Library/Application Support/WebTabinal/integration.bash"
 ```
 
+## 通知
+
+コマンド完了（タブが非アクティブ、またはウィンドウがフォーカスされていないとき）と、ターミナルが受け取った OSC 9 / OSC 99（エージェントの承認待ちなど）で macOS 通知を出します。アクティブなタブかつフォーカス中は出しません（`notification.always` で上書き）。待ち通知は `notification.min_duration_ms` の対象外です。
+
+WebTabinal が未知のターミナル扱いだと、コーディングエージェントが OSC を出さないことがあります。その場合は次の最短設定で OSC 9 を有効にします。
+
+**Codex**（`~/.codex/config.toml`）:
+
+```toml
+[tui]
+notifications = ["agent-turn-complete", "approval-requested"]
+notification_method = "osc9"
+```
+
+**cursor-agent**（`~/.cursor/cli-config.json`）: `"notifications": true`（既定でオンのことがあります）。出ない場合はフックから OSC 9 を書いてください。
+
+**Claude Code**（`~/.claude/settings.json`）。即時に出すなら `PermissionRequest`、少し待ってからなら `Notification`:
+
+```json
+{
+  "hooks": {
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "printf '\\033]9;Claude Code needs your attention\\007' > /dev/tty"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
 ## LaunchAgent（任意: ログイン時の常駐）
 
 `.app` がデーモンを起動できるため必須ではありません。ログイン時から常駐させたい場合や、デーモンが異常終了したときに KeepAlive で復帰させたい場合に使います（正常終了や「既に listen 中」の成功終了では再起動しません）。

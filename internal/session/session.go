@@ -55,6 +55,8 @@ type Session struct {
 	logger   *log.Logger
 	done     chan struct{}
 	closed   bool
+
+	colorQueries map[int]int
 }
 
 type Info struct {
@@ -204,12 +206,7 @@ func (s *Session) readLoop() {
 			copy(chunk, buf[:n])
 			s.Ring.Write(chunk)
 			events := s.parser.Feed(chunk)
-			for _, ev := range events {
-				s.applyEvent(ev)
-				if s.onEvent != nil {
-					s.onEvent(s, ev)
-				}
-			}
+			s.handleEvents(events)
 			if s.onOutput != nil {
 				s.onOutput(s, chunk)
 			}
@@ -240,6 +237,19 @@ func (s *Session) waitLoop() {
 	close(s.done)
 	if s.onExit != nil {
 		s.onExit(s)
+	}
+}
+
+func (s *Session) handleEvents(events []osc.Event) {
+	for _, ev := range events {
+		if ev.Kind == osc.EventColorQuery {
+			s.noteColorQueries(ev.ColorIndexes)
+			continue
+		}
+		s.applyEvent(ev)
+		if s.onEvent != nil {
+			s.onEvent(s, ev)
+		}
 	}
 }
 
@@ -283,6 +293,10 @@ func (s *Session) applyEvent(ev osc.Event) {
 }
 
 func (s *Session) Write(data []byte) error {
+	filtered := osc.FilterColorReports(data, s.consumeColorQuery)
+	if len(filtered) == 0 {
+		return nil
+	}
 	s.mu.Lock()
 	ptmx := s.pty
 	closed := s.closed
@@ -290,8 +304,37 @@ func (s *Session) Write(data []byte) error {
 	if closed || ptmx == nil {
 		return io.ErrClosedPipe
 	}
-	_, err := ptmx.Write(data)
+	_, err := ptmx.Write(filtered)
 	return err
+}
+
+func (s *Session) noteColorQueries(ids []int) {
+	if len(ids) == 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.colorQueries == nil {
+		s.colorQueries = map[int]int{}
+	}
+	for _, id := range ids {
+		s.colorQueries[id]++
+	}
+}
+
+func (s *Session) consumeColorQuery(code int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := s.colorQueries[code]
+	if n <= 0 {
+		return false
+	}
+	if n == 1 {
+		delete(s.colorQueries, code)
+	} else {
+		s.colorQueries[code] = n - 1
+	}
+	return true
 }
 
 func (s *Session) Resize(cols, rows uint16) error {

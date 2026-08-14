@@ -2,6 +2,7 @@ package session
 
 import (
 	"bytes"
+	"io"
 	"log"
 	"os"
 	"strings"
@@ -21,6 +22,16 @@ func TestApplyEventDoesNotReviveExitedSession(t *testing.T) {
 	}
 }
 
+func TestApplyEventNotifyDoesNotChangeRunningState(t *testing.T) {
+	s := &Session{State: StateRunning, Cwd: "/tmp", Command: "codex"}
+
+	s.applyEvent(osc.Event{Kind: osc.EventNotify, Title: "Codex", Body: "needs approval"})
+
+	if s.State != StateRunning || s.Cwd != "/tmp" || s.Command != "codex" {
+		t.Fatalf("session = %+v, want running unchanged", s)
+	}
+}
+
 func TestReadLoopLogsNonEOFErrors(t *testing.T) {
 	reader, writer, err := os.Pipe()
 	if err != nil {
@@ -37,6 +48,89 @@ func TestReadLoopLogsNonEOFErrors(t *testing.T) {
 
 	if got := logs.String(); !strings.Contains(got, "session session pty read:") {
 		t.Fatalf("log = %q, want PTY read error", got)
+	}
+}
+
+func TestWriteDropsUnsolicitedOSC11Report(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	s := &Session{pty: writer}
+	report := []byte("\x1b]11;rgb:ffff/ffff/ffff\x1b\\")
+	if err := s.Write(report); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("PTY input = %q, want unsolicited OSC 11 report dropped", got)
+	}
+}
+
+func TestWriteAllowsOSC11ReportAfterQuery(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	s := &Session{pty: writer}
+	s.handleEvents(s.parser.Feed([]byte("\x1b]11;?\x07")))
+	report := []byte("\x1b]11;rgb:ffff/ffff/ffff\x1b\\")
+	if err := s.Write(report); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(report) {
+		t.Fatalf("PTY input = %q, want allowed OSC 11 report", got)
+	}
+}
+
+func TestWriteDropsDuplicateOSC11Report(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	s := &Session{pty: writer}
+	s.handleEvents(s.parser.Feed([]byte("\x1b]11;?\x07")))
+	report := []byte("\x1b]11;rgb:ffff/ffff/ffff\x1b\\")
+	if err := s.Write(report); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Write(report); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(report) {
+		t.Fatalf("PTY input = %q, want only the first OSC 11 report", got)
+	}
+}
+
+func TestColorQueryDoesNotEmitOnEvent(t *testing.T) {
+	called := false
+	s := &Session{onEvent: func(*Session, osc.Event) { called = true }}
+	s.handleEvents(s.parser.Feed([]byte("\x1b]11;?\x07")))
+	if called {
+		t.Fatal("color query should not broadcast session state")
 	}
 }
 
