@@ -62,13 +62,16 @@ UI と API は `.app` 内のデーモン（`webtabinal-daemon`）に埋め込ま
 ```bash
 # アプリを終了し、古いデーモンを止める
 osascript -e 'quit app "WebTabinal"'
+pkill -f '/webtabinal serve' || true
 pkill -f 'webtabinal-daemon serve' || true
+
+# 8642 が空いていることを確認してから
+lsof -nP -iTCP:8642 -sTCP:LISTEN
 
 # 新版をビルドして /Applications へ置き換える
 make desktop
 rm -rf /Applications/WebTabinal.app
 cp -R bin/WebTabinal.app /Applications/
-open /Applications/WebTabinal.app
 ```
 
 LaunchAgent（`webtabinal install`）を使っている場合は、置き換え後に新しいバイナリで入れ直してください。

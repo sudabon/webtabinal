@@ -329,6 +329,19 @@ export default function App() {
     [reportActionError],
   );
 
+  const changeShell = useCallback(
+    async (shell: string) => {
+      try {
+        const next = await api.patchConfig({ shell });
+        setConfig(next);
+      } catch (err) {
+        reportActionError(err);
+        throw err;
+      }
+    },
+    [reportActionError],
+  );
+
   if (emptyVisible && sessions.length === 0) {
     return (
       <div className="empty">
@@ -403,6 +416,8 @@ export default function App() {
         open={settingsOpen}
         colorScheme={config?.color_scheme ?? 'system'}
         onColorSchemeChange={(scheme) => void changeColorScheme(scheme)}
+        shell={config?.shell ?? '/bin/zsh'}
+        onShellChange={changeShell}
         onClose={() => setSettingsOpen(false)}
       />
       <TabMemoModal

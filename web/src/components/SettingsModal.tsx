@@ -1,18 +1,37 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ColorScheme } from '../types';
 import { AppearanceSettings } from './AppearanceSettings';
+import { GeneralSettings } from './GeneralSettings';
 
-const CATEGORIES = [{ id: 'appearance', label: '外観' }] as const;
+const CATEGORIES = [
+  { id: 'appearance', label: '外観' },
+  { id: 'general', label: '一般' },
+] as const;
+
+type CategoryId = (typeof CATEGORIES)[number]['id'];
 
 type Props = {
   open: boolean;
   colorScheme: ColorScheme;
   onColorSchemeChange: (scheme: ColorScheme) => void;
+  shell: string;
+  onShellChange: (shell: string) => void | Promise<void>;
   onClose: () => void;
 };
 
-export function SettingsModal({ open, colorScheme, onColorSchemeChange, onClose }: Props) {
+export function SettingsModal({
+  open,
+  colorScheme,
+  onColorSchemeChange,
+  shell,
+  onShellChange,
+  onClose,
+}: Props) {
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const [category, setCategory] = useState<CategoryId>('appearance');
+  if (!open && category !== 'appearance') {
+    setCategory('appearance');
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -37,6 +56,8 @@ export function SettingsModal({ open, colorScheme, onColorSchemeChange, onClose 
 
   if (!open) return null;
 
+  const selected = CATEGORIES.find((c) => c.id === category) ?? CATEGORIES[0];
+
   return (
     <div className="settings-backdrop" onMouseDown={onClose}>
       <div
@@ -48,16 +69,25 @@ export function SettingsModal({ open, colorScheme, onColorSchemeChange, onClose 
       >
         <nav className="settings-nav">
           {CATEGORIES.map((c) => (
-            <button key={c.id} className="settings-nav-item active" type="button">
+            <button
+              key={c.id}
+              className={`settings-nav-item${category === c.id ? ' active' : ''}`}
+              type="button"
+              onClick={() => setCategory(c.id)}
+            >
               {c.label}
             </button>
           ))}
         </nav>
         <div className="settings-pane">
           <header className="settings-pane-header">
-            <h2>外観</h2>
+            <h2>{selected.label}</h2>
           </header>
-          <AppearanceSettings colorScheme={colorScheme} onColorSchemeChange={onColorSchemeChange} />
+          {category === 'appearance' ? (
+            <AppearanceSettings colorScheme={colorScheme} onColorSchemeChange={onColorSchemeChange} />
+          ) : (
+            <GeneralSettings shell={shell} onShellChange={onShellChange} />
+          )}
           <footer className="settings-footer">
             <button ref={closeButtonRef} className="settings-close" type="button" onClick={onClose}>
               キャンセル

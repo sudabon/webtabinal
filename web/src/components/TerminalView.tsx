@@ -7,6 +7,14 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
 import { terminalTheme, type ResolvedTheme } from '../theme';
 import type { AppConfig } from '../types';
+import {
+  applyClipboardShortcut,
+  clipboardShortcutAction,
+  installTerminalClipboardFacade,
+  isTextFieldElement,
+  postDesktopClipboardRead,
+  requestClipboardPaste,
+} from '../clipboard';
 import { openExternalLink, shouldUseWebglRenderer } from '../util';
 import { decodeB64Bytes, TerminalSocket } from '../ws';
 
@@ -67,6 +75,35 @@ export function TerminalView({ sessionId, socket, config, copyOnSelect, theme }:
       if (sel) void navigator.clipboard.writeText(sel);
     });
 
+    const uninstallClipboard = installTerminalClipboardFacade({
+      getSelection: () => term.getSelection(),
+      paste: (text) => term.paste(text),
+    });
+
+    term.attachCustomKeyEventHandler((ev) => {
+      const action = clipboardShortcutAction(ev, {
+        textFieldFocused: isTextFieldElement(document.activeElement),
+      });
+      const result = applyClipboardShortcut(action, {
+        selection: term.getSelection(),
+        writeText: (text) => {
+          void navigator.clipboard.writeText(text).catch(() => {});
+        },
+        requestPaste: () => {
+          requestClipboardPaste(postDesktopClipboardRead, () => {
+            void navigator.clipboard.readText().then((text) => {
+              if (text) term.paste(text);
+            }).catch(() => {});
+          });
+        },
+      });
+      if (result === 'handled') {
+        ev.preventDefault();
+        return false;
+      }
+      return true;
+    });
+
     const ro = new ResizeObserver(() => {
       fit.fit();
       const sid = attachedRef.current;
@@ -79,6 +116,7 @@ export function TerminalView({ sessionId, socket, config, copyOnSelect, theme }:
     return () => {
       onData.dispose();
       onSel.dispose();
+      uninstallClipboard();
       ro.disconnect();
       term.dispose();
       termRef.current = null;

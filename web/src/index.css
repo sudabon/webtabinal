@@ -430,6 +430,27 @@ body,
   font-size: 12px;
 }
 
+.settings-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--sidebar);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.settings-input:focus {
+  outline: 1px solid var(--accent);
+  border-color: var(--accent);
+}
+
+.settings-field-hint {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .settings-footer {
   display: flex;
   justify-content: flex-end;

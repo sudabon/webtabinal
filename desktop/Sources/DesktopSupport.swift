@@ -201,3 +201,15 @@ func spawnDetachedProcess(executablePath: String, arguments: [String], logPath: 
     }
     return pid
 }
+
+func javaScriptStringLiteral(_ value: String) -> String {
+    do {
+        let data = try JSONSerialization.data(withJSONObject: [value])
+        guard let wrapped = String(data: data, encoding: .utf8), wrapped.count >= 2 else {
+            return "\"\""
+        }
+        return String(wrapped.dropFirst().dropLast())
+    } catch {
+        return "\"\""
+    }
+}

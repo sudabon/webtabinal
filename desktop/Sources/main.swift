@@ -137,6 +137,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             keyEquivalent: "q"
         )
 
+        let editItem = NSMenuItem()
+        mainMenu.addItem(editItem)
+        let editMenu = NSMenu(title: "Edit")
+        editItem.submenu = editMenu
+        let copyItem = editMenu.addItem(withTitle: "Copy", action: #selector(copyFromWeb(_:)), keyEquivalent: "c")
+        copyItem.target = self
+        let pasteItem = editMenu.addItem(withTitle: "Paste", action: #selector(pasteFromWeb(_:)), keyEquivalent: "v")
+        pasteItem.target = self
+
         NSApp.mainMenu = mainMenu
     }
 
@@ -254,6 +263,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         try spawnDetachedProcess(executablePath: binary, arguments: ["serve"], logPath: log)
     }
 
+    // MARK: - Clipboard
+
+    @objc func copyFromWeb(_ sender: Any?) {
+        copySelectionToPasteboard()
+    }
+
+    @objc func pasteFromWeb(_ sender: Any?) {
+        pasteFromPasteboard()
+    }
+
+    private func copySelectionToPasteboard() {
+        guard webView != nil else { return }
+        webView.evaluateJavaScript("window.__webtabinalClipboard && window.__webtabinalClipboard.copyText()") { result, _ in
+            guard let text = result as? String, !text.isEmpty else { return }
+            DispatchQueue.main.async {
+                let pasteboard = NSPasteboard.general
+                pasteboard.clearContents()
+                pasteboard.setString(text, forType: .string)
+            }
+        }
+    }
+
+    private func pasteFromPasteboard() {
+        guard webView != nil else { return }
+        webView.evaluateJavaScript("window.__webtabinalClipboard && window.__webtabinalClipboard.focusKind()") { [weak self] result, _ in
+            guard let self else { return }
+            let kind = result as? String
+            DispatchQueue.main.async {
+                if kind == "textfield" {
+                    self.pasteIntoFocusedFieldFromPasteboard()
+                    return
+                }
+                self.pasteIntoTerminalFromPasteboard()
+            }
+        }
+    }
+
+    private func pasteIntoFocusedFieldFromPasteboard() {
+        guard webView != nil else { return }
+        guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else { return }
+        let literal = javaScriptStringLiteral(text)
+        webView.evaluateJavaScript("window.__webtabinalClipboard && window.__webtabinalClipboard.insertIntoFocusedField(\(literal))")
+    }
+
+    private func pasteIntoTerminalFromPasteboard() {
+        guard webView != nil else { return }
+        guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else { return }
+        let literal = javaScriptStringLiteral(text)
+        webView.evaluateJavaScript("window.__webtabinalClipboard && window.__webtabinalClipboard.paste(\(literal))")
+    }
+
     // MARK: - WKNavigationDelegate
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -368,6 +428,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         if let body = message.body as? String, body == "close" {
             DispatchQueue.main.async { [weak self] in
                 self?.window.performClose(nil)
+            }
+            return
+        }
+        if let body = message.body as? [String: Any], body["t"] as? String == "clipboardRead" {
+            DispatchQueue.main.async { [weak self] in
+                self?.pasteFromPasteboard()
             }
         }
     }

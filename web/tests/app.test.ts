@@ -302,3 +302,147 @@ test('stale successful color scheme syncs UI after a newer failure', async (t) =
   settings = render();
   assert.equal(settings.colorScheme, 'dark');
 });
+
+test('settings modal receives the current shell and keeps it after a successful patch', async (t) => {
+  const hooks = new HookHarness();
+  const api = {
+    getConfig: async () => appConfig('system'),
+    patchConfig: async (patch: Partial<AppConfig>) => ({ ...appConfig('system'), ...patch }),
+  };
+  const server = await createServer({
+    configFile: false,
+    logLevel: 'silent',
+    plugins: [mockModules(hooks, api), react()],
+    resolve: {
+      alias: [
+        { find: /^react$/, replacement: fileURLToPath(new URL('./app-react-mock.ts', import.meta.url)) },
+        { find: /^react\/jsx-dev-runtime$/, replacement: fileURLToPath(new URL('./app-react-mock.ts', import.meta.url)) },
+        { find: /^react\/jsx-runtime$/, replacement: fileURLToPath(new URL('./app-react-mock.ts', import.meta.url)) },
+      ],
+    },
+    server: { middlewareMode: true },
+  });
+  t.after(async () => {
+    await server.close();
+  });
+
+  Object.assign(globalThis, {
+    document: { hasFocus: () => true, title: '' },
+    window: {
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => true,
+      setTimeout,
+      clearTimeout,
+      close: () => {},
+    },
+  });
+
+  const { default: App } = await server.ssrLoadModule('/src/App.tsx') as {
+    default: () => { props: { children: Array<{ props: Record<string, unknown> }> } };
+  };
+  const render = () => {
+    hooks.beginRender();
+    const tree = App();
+    const children = tree.props.children as Array<{ props?: Record<string, unknown> } | false | null>;
+    const settings = children.find(
+      (child) => child && typeof child === 'object' && child.props && 'colorScheme' in child.props,
+    );
+    return settings?.props as {
+      shell: string;
+      onShellChange: (shell: string) => Promise<void>;
+    };
+  };
+
+  render();
+  for (const effect of hooks.effects) effect();
+  await new Promise(setImmediate);
+
+  let settings = render();
+  assert.equal(settings.shell, '/bin/zsh');
+  await settings.onShellChange('/bin/bash');
+
+  settings = render();
+  assert.equal(settings.shell, '/bin/bash');
+});
+
+test('failed shell patch rolls back and shows the action-error toast', async (t) => {
+  const originalConsoleError = console.error;
+  console.error = () => {};
+  t.after(() => {
+    console.error = originalConsoleError;
+  });
+
+  const hooks = new HookHarness();
+  const api = {
+    getConfig: async () => appConfig('system'),
+    patchConfig: async () => {
+      throw new Error('shell must be an absolute path');
+    },
+  };
+  const server = await createServer({
+    configFile: false,
+    logLevel: 'silent',
+    plugins: [mockModules(hooks, api), react()],
+    resolve: {
+      alias: [
+        { find: /^react$/, replacement: fileURLToPath(new URL('./app-react-mock.ts', import.meta.url)) },
+        { find: /^react\/jsx-dev-runtime$/, replacement: fileURLToPath(new URL('./app-react-mock.ts', import.meta.url)) },
+        { find: /^react\/jsx-runtime$/, replacement: fileURLToPath(new URL('./app-react-mock.ts', import.meta.url)) },
+      ],
+    },
+    server: { middlewareMode: true },
+  });
+  t.after(async () => {
+    await server.close();
+  });
+
+  Object.assign(globalThis, {
+    document: { hasFocus: () => true, title: '' },
+    window: {
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => true,
+      setTimeout,
+      clearTimeout,
+      close: () => {},
+    },
+  });
+
+  const { default: App } = await server.ssrLoadModule('/src/App.tsx') as {
+    default: () => { props: { children: Array<{ props: Record<string, unknown> }> } };
+  };
+  const render = () => {
+    hooks.beginRender();
+    const tree = App();
+    const children = tree.props.children as Array<{ props?: Record<string, unknown>; type?: unknown } | false | null>;
+    const settings = children.find(
+      (child) => child && typeof child === 'object' && child.props && 'colorScheme' in child.props,
+    );
+    const toast = children.find(
+      (child) => child && typeof child === 'object' && child.props?.className === 'toast-error',
+    );
+    return {
+      settings: settings?.props as {
+        shell: string;
+        onShellChange: (shell: string) => Promise<void>;
+      },
+      toast: toast?.props as { children?: unknown } | undefined,
+    };
+  };
+
+  render();
+  for (const effect of hooks.effects) effect();
+  await new Promise(setImmediate);
+
+  let view = render();
+  assert.equal(view.settings.shell, '/bin/zsh');
+  await assert.rejects(view.settings.onShellChange('bin/zsh'), /shell must be an absolute path/);
+
+  view = render();
+  assert.equal(view.settings.shell, '/bin/zsh');
+  assert.equal(
+    Array.isArray(view.toast?.children) ? view.toast.children[0] : view.toast?.children,
+    'shell must be an absolute path',
+  );
+});

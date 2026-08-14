@@ -94,8 +94,16 @@ private func testDetachedSpawnCreatesSessionAndCapturesLogs() throws {
     try expect(output.contains("stderr"), "stderr must be written to the daemon log")
 }
 
+private func testJavaScriptStringLiteralEscapesQuotesAndNewlines() throws {
+    try expect(javaScriptStringLiteral("hello") == "\"hello\"", "plain text must be quoted")
+    try expect(javaScriptStringLiteral("a\"b") == "\"a\\\"b\"", "quotes must be escaped")
+    try expect(javaScriptStringLiteral("a\nb") == "\"a\\nb\"", "newlines must be escaped")
+    try expect(javaScriptStringLiteral("") == "\"\"", "empty string must be quoted")
+}
+
 try testConfiguredPortDefaultsMissingAndZero()
 try testConfiguredPortValidatesExplicitValues()
 try testProbeRequiresWebTabinalSignature()
 try testDetachedSpawnCreatesSessionAndCapturesLogs()
+try testJavaScriptStringLiteralEscapesQuotesAndNewlines()
 print("desktop support tests passed")

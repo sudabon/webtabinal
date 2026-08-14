@@ -1,0 +1,3 @@
+schema: spec-driven
+created: 2026-08-14
+goal: 設定モーダルから起動シェルの絶対パスを編集できるようにする
