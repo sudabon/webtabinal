@@ -17,6 +17,7 @@ import {
 } from '../clipboard';
 import { openExternalLink, shouldUseWebglRenderer } from '../util';
 import { decodeB64Bytes, TerminalSocket } from '../ws';
+import { shouldApplyTerminalFocus } from '../terminal-focus';
 import { shouldForwardTerminalInput } from '../terminal-input';
 
 type Props = {
@@ -25,9 +26,21 @@ type Props = {
   config: AppConfig | null;
   copyOnSelect: boolean;
   theme: ResolvedTheme;
+  focusSeq: number;
+  settingsOpen: boolean;
+  memoOpen: boolean;
 };
 
-export function TerminalView({ sessionId, socket, config, copyOnSelect, theme }: Props) {
+export function TerminalView({
+  sessionId,
+  socket,
+  config,
+  copyOnSelect,
+  theme,
+  focusSeq,
+  settingsOpen,
+  memoOpen,
+}: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -129,6 +142,11 @@ export function TerminalView({ sessionId, socket, config, copyOnSelect, theme }:
     // Recreate on session switch so queued writes/OSC replies cannot follow the new sid.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
+
+  useEffect(() => {
+    if (!shouldApplyTerminalFocus({ settingsOpen, memoOpen })) return;
+    termRef.current?.focus();
+  }, [sessionId, focusSeq, settingsOpen, memoOpen]);
 
   useEffect(() => {
     const term = termRef.current;

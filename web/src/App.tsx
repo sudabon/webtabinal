@@ -23,6 +23,7 @@ export default function App() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [memoSessionId, setMemoSessionId] = useState<string | null>(null);
+  const [focusSeq, setFocusSeq] = useState(0);
   const prevCount = useRef<number | null>(null);
   const bootstrapped = useRef(false);
   const everConnected = useRef(false);
@@ -263,6 +264,7 @@ export default function App() {
 
   const select = (id: string) => {
     setActiveId(id);
+    setFocusSeq((n) => n + 1);
     setUnread((prev) => {
       if (!prev.has(id)) return prev;
       const next = new Set(prev);
@@ -276,6 +278,7 @@ export default function App() {
       const s = await api.createSession();
       setBootError(null);
       setActiveId(s.id);
+      setFocusSeq((n) => n + 1);
     } catch (err) {
       reportActionError(err);
       if (emptyVisible) {
@@ -447,6 +450,9 @@ export default function App() {
           config={config}
           copyOnSelect={!!config?.copy_on_select}
           theme={theme}
+          focusSeq={focusSeq}
+          settingsOpen={settingsOpen}
+          memoOpen={memoSessionId != null}
         />
       </main>
       <SettingsModal
