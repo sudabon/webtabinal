@@ -2,6 +2,45 @@
 
 macOS 向けのローカル専用ブラウザターミナルです。Go デーモンが PTY を管理し、React + xterm.js が描画します。推奨のデスクトップ入口はネイティブ `.app` です（Dock / Finder から開くと、未起動ならデーモンも起動します）。
 
+## インストール
+
+初回はツールの導入とフロントエンド依存関係のインストールが必要です。これを省略すると `make build` が `tsc: command not found` で失敗します。
+
+### 必要なもの
+
+| ツール | 用途 | 目安 |
+|--------|------|------|
+| macOS | 実行環境 | — |
+| Git | リポジトリの取得 | — |
+| Go | デーモンのビルド | `go.mod` のバージョン（現在 1.26.5）以上 |
+| Node.js / npm | フロントエンドのビルド | 20.19+ または 22.12+ |
+| Xcode Command Line Tools | `make desktop`（`swiftc`） | CLI のみなら不要 |
+
+Homebrew を使う場合の例:
+
+```bash
+xcode-select --install
+brew install go node
+```
+
+入っているかは次で確認できます。
+
+```bash
+go version
+node -v
+npm -v
+```
+
+### リポジトリと npm 依存関係
+
+```bash
+git clone git@github.com:sudabon/webtabinal.git
+cd webtabinal
+cd web && npm install && cd ..
+```
+
+これ以降は [クイックスタート](#クイックスタート推奨-デスクトップアプリ) に進んでください。依存関係を入れ直すときも `cd web && npm install` です。
+
 ## クイックスタート（推奨: デスクトップアプリ）
 
 ```bash
