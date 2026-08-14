@@ -6,6 +6,7 @@ web:
 	cd web && npm run build
 	rm -rf internal/static/dist
 	cp -R web/dist internal/static/dist
+	touch internal/static/dist/.gitkeep
 
 daemon:
 	mkdir -p bin
@@ -21,4 +22,7 @@ desktop-test:
 	bash desktop/scripts/run-tests.sh
 
 clean:
-	rm -rf bin web/dist internal/static/dist
+	rm -rf bin web/dist
+	rm -rf internal/static/dist
+	mkdir -p internal/static/dist
+	touch internal/static/dist/.gitkeep

@@ -5,7 +5,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { SearchAddon } from '@xterm/addon-search';
 import { WebglAddon } from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
-import { terminalTheme, type ResolvedTheme } from '../theme';
+import { xtermViewOptions, type ResolvedTheme } from '../theme';
 import type { AppConfig } from '../types';
 import {
   applyClipboardShortcut,
@@ -45,8 +45,8 @@ export function TerminalView({ sessionId, socket, config, copyOnSelect, theme }:
       fontFamily: config?.font_family || "Menlo, Monaco, 'Courier New', monospace",
       fontSize: config?.font_size || 14,
       scrollback: config?.scrollback_lines || 10000,
-      theme: terminalTheme[theme],
       allowProposedApi: true,
+      ...xtermViewOptions(theme),
     });
     const fit = new FitAddon();
     const search = new SearchAddon();
@@ -133,7 +133,9 @@ export function TerminalView({ sessionId, socket, config, copyOnSelect, theme }:
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
-    term.options.theme = terminalTheme[theme];
+    const opts = xtermViewOptions(theme);
+    term.options.theme = opts.theme;
+    term.options.minimumContrastRatio = opts.minimumContrastRatio;
   }, [theme]);
 
   useEffect(() => {
