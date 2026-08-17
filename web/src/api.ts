@@ -1,4 +1,4 @@
-import type { AppConfig, SessionInfo } from './types';
+import type { AppConfig, AppConfigPatch, SessionInfo } from './types';
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -35,6 +35,6 @@ export const api = {
       body: JSON.stringify({ ids }),
     }),
   getConfig: () => req<AppConfig>('/api/config'),
-  patchConfig: (patch: Partial<AppConfig>) =>
+  patchConfig: (patch: AppConfigPatch) =>
     req<AppConfig>('/api/config', { method: 'PATCH', body: JSON.stringify(patch) }),
 };

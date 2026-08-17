@@ -1,22 +1,4 @@
-# notifications Specification
-
-## Purpose
-TBD - created by archiving change lterm-v01. Update Purpose after archive.
-## Requirements
-### Requirement: Notify on command completion
-When a command completes (`OSC 133;D` or fallback running→idle), the system SHALL raise a desktop notification if notifications are enabled, subject to suppression and duration rules. Default suppression: do not notify when the completing tab is active AND the app window is focused, unless `notification.always` is true. Completions shorter than `notification.min_duration_ms` SHALL be skipped. Notification title SHALL use ✓ or ✗ with the command; body SHALL include directory basename and duration. Click SHALL focus the window and switch to that tab. Sound SHALL NOT play in v0.1 (`sound` key reserved).
-
-#### Scenario: Background completion notifies
-- **WHEN** a command completes on a non-active tab (or the window is unfocused) and notifications are enabled
-- **THEN** a macOS notification is shown with command and duration
-
-#### Scenario: Active focused completion is suppressed by default
-- **WHEN** a command completes on the active tab while the window is focused and `notification.always` is false
-- **THEN** no desktop notification is shown
-
-#### Scenario: Short commands respect min duration
-- **WHEN** `notification.min_duration_ms` is 5000 and a command finishes in 1s
-- **THEN** no notification is emitted for that completion
+## MODIFIED Requirements
 
 ### Requirement: Dock badge and unread dots
 The app SHALL maintain an unread completion count via `navigator.setAppBadge()` when that API is available. Opening a tab with unread completion SHALL clear that tab’s unread mark and decrement the badge. Notification permission SHALL NOT be requested automatically during page load; authorization SHALL follow the user-initiated notification authorization requirement.
@@ -33,33 +15,7 @@ The app SHALL maintain an unread completion count via `navigator.setAppBadge()` 
 - **WHEN** the native app, PWA, or browser page loads while notification permission is undetermined
 - **THEN** the system does not request notification permission until the user activates the permission control
 
-### Requirement: Notify on agent wait OSC
-
-When the daemon reports an OSC 9 or OSC 99 notify event, the client SHALL raise a desktop notification if notifications are enabled, subject to the same default suppression as command completion: do not notify when the tab is active AND the app window is focused, unless `notification.always` is true. `notification.min_duration_ms` SHALL NOT skip agent-wait notifications. Notification title and body SHALL come from the OSC payload (title MAY fall back to the session command or `WebTabinal`). Click SHALL focus the window and switch to that tab. Sound SHALL NOT play (`sound` key reserved).
-
-#### Scenario: Background wait notifies
-
-- **WHEN** an OSC notify arrives for a non-active tab (or the window is unfocused) and notifications are enabled
-- **THEN** a macOS notification is shown with the OSC title and body
-
-#### Scenario: Active focused wait is suppressed by default
-
-- **WHEN** an OSC notify arrives for the active tab while the window is focused and `notification.always` is false
-- **THEN** no desktop notification is shown
-
-#### Scenario: Wait ignores min duration
-
-- **WHEN** `notification.min_duration_ms` is 5000 and an OSC notify arrives 1s after the command started
-- **THEN** the wait notification is still emitted (subject to focus suppression)
-
-### Requirement: Unread mark on agent wait
-
-A suppressed-or-shown wait notification on a non-active tab SHALL mark that tab unread and increment the Dock badge, using the same clear-on-activate behavior as completion unread marks.
-
-#### Scenario: Background wait marks unread
-
-- **WHEN** an OSC notify arrives for a non-active tab
-- **THEN** that tab shows an unread dot and the Dock badge count increases by one if it was not already unread
+## ADDED Requirements
 
 ### Requirement: Platform-specific notification delivery
 After an event passes the existing notification enablement, focus suppression, and duration rules, the client SHALL use exactly one notification provider for the current environment. The macOS native app SHALL send the notification to the native desktop bridge and SHALL NOT invoke the Web Notification API. A browser or PWA SHALL use the Web Notification API only when its permission is granted. Failure or lack of permission SHALL NOT prevent the existing unread-tab behavior.
@@ -105,4 +61,3 @@ Activating an OS notification SHALL focus the WebTabinal window and select the s
 #### Scenario: Web notification click selects a background session
 - **WHEN** the user activates a Web Notification for a non-active session
 - **THEN** the page is focused and the client selects that session through the same tab-selection path
-

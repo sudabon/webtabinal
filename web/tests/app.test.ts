@@ -5,8 +5,9 @@ import { fileURLToPath } from 'node:url';
 import react from '@vitejs/plugin-react';
 import { createServer, type Plugin } from 'vite';
 
-import type { AppConfig, ColorScheme } from '../src/types.ts';
+import type { AppConfig, AppConfigPatch, ColorScheme, NotificationConfig } from '../src/types.ts';
 import { DEFAULT_KEY_BINDINGS, type KeyBindings } from '../src/keymap.ts';
+import { NATIVE_NOTIFICATION_ACTIVATION_EVENT } from '../src/notification-provider.ts';
 
 type StateSetter<T> = (next: T | ((current: T) => T)) => void;
 
@@ -112,6 +113,7 @@ function mockModules(hooks: HookHarness, api: object, emitSessions = false): Plu
       ? `
       export class TerminalSocket {
         constructor(opts) {
+          globalThis.__webtabinalAppTest.socketOptions = opts;
           opts.onMessage({
             t: 'sessions',
             list: [
@@ -464,6 +466,203 @@ test('failed shell patch rolls back and shows the action-error toast', async (t)
     Array.isArray(view.toast?.children) ? view.toast.children[0] : view.toast?.children,
     'shell must be an absolute path',
   );
+});
+
+test('notification controls send nested config patches and retain the last persisted values on failure', async (t) => {
+  const originalConsoleError = console.error;
+  console.error = () => {};
+  t.after(() => {
+    console.error = originalConsoleError;
+  });
+
+  const hooks = new HookHarness();
+  let serverConfig = appConfig('system');
+  serverConfig.notification.enabled = true;
+  const patches: AppConfigPatch[] = [];
+  const api = {
+    getConfig: async () => serverConfig,
+    patchConfig: async (patch: AppConfigPatch) => {
+      patches.push(patch);
+      if (patch.notification?.always === true) {
+        throw new Error('notification update failed');
+      }
+      serverConfig = {
+        ...serverConfig,
+        ...patch,
+        notification: { ...serverConfig.notification, ...patch.notification },
+      };
+      return serverConfig;
+    },
+  };
+  const server = await createServer({
+    configFile: false,
+    logLevel: 'silent',
+    plugins: [mockModules(hooks, api), react()],
+    resolve: {
+      alias: [
+        { find: /^react$/, replacement: fileURLToPath(new URL('./app-react-mock.ts', import.meta.url)) },
+        { find: /^react\/jsx-dev-runtime$/, replacement: fileURLToPath(new URL('./app-react-mock.ts', import.meta.url)) },
+        { find: /^react\/jsx-runtime$/, replacement: fileURLToPath(new URL('./app-react-mock.ts', import.meta.url)) },
+      ],
+    },
+    server: { middlewareMode: true },
+  });
+  t.after(async () => {
+    await server.close();
+  });
+
+  Object.assign(globalThis, {
+    document: { hasFocus: () => true, title: '' },
+    window: {
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => true,
+      setTimeout,
+      clearTimeout,
+      close: () => {},
+    },
+  });
+
+  const { default: App } = await server.ssrLoadModule('/src/App.tsx') as {
+    default: () => { props: { children: Array<{ props?: Record<string, unknown> } | false | null> } };
+  };
+  const render = () => {
+    hooks.beginRender();
+    const tree = App();
+    const children = tree.props.children as Array<{ props?: Record<string, unknown> } | false | null>;
+    const settings = children.find(
+      (child) => child && typeof child === 'object' && child.props && 'colorScheme' in child.props,
+    );
+    const toast = children.find(
+      (child) => child && typeof child === 'object' && child.props?.className === 'toast-error',
+    );
+    return {
+      settings: settings?.props as {
+        notification: NotificationConfig;
+        onNotificationChange: (patch: Partial<NotificationConfig>) => Promise<void>;
+      },
+      toast: toast?.props as { children?: unknown } | undefined,
+    };
+  };
+
+  render();
+  for (const effect of hooks.effects) effect();
+  await new Promise(setImmediate);
+
+  let view = render();
+  assert.equal(view.settings.notification.enabled, true);
+  await view.settings.onNotificationChange({ enabled: false });
+  view = render();
+  assert.equal(view.settings.notification.enabled, false);
+  assert.deepEqual(patches[0], { notification: { enabled: false } });
+
+  await assert.rejects(
+    view.settings.onNotificationChange({ always: true }),
+    /notification update failed/,
+  );
+  view = render();
+  assert.equal(view.settings.notification.enabled, false);
+  assert.equal(view.settings.notification.always, false);
+  assert.deepEqual(patches[1], { notification: { always: true } });
+  assert.equal(
+    Array.isArray(view.toast?.children) ? view.toast.children[0] : view.toast?.children,
+    'notification update failed',
+  );
+});
+
+test('missing notification permission keeps unread state and native activation selects that session', async (t) => {
+  const hooks = new HookHarness();
+  const cfg = appConfig('system');
+  cfg.notification.enabled = true;
+  const api = {
+    getConfig: async () => cfg,
+    patchConfig: async (patch: Partial<AppConfig>) => ({ ...cfg, ...patch }),
+  };
+  const listeners: Listener[] = [];
+  const server = await createServer({
+    configFile: false,
+    logLevel: 'silent',
+    plugins: [mockModules(hooks, api, true), react()],
+    resolve: {
+      alias: [
+        { find: /^react$/, replacement: fileURLToPath(new URL('./app-react-mock.ts', import.meta.url)) },
+        { find: /^react\/jsx-dev-runtime$/, replacement: fileURLToPath(new URL('./app-react-mock.ts', import.meta.url)) },
+        { find: /^react\/jsx-runtime$/, replacement: fileURLToPath(new URL('./app-react-mock.ts', import.meta.url)) },
+      ],
+    },
+    server: { middlewareMode: true },
+  });
+  t.after(async () => {
+    await server.close();
+  });
+
+  Object.assign(globalThis, {
+    document: { hasFocus: () => true, title: '', activeElement: null },
+    window: {
+      addEventListener: (type: string, fn: (event: unknown) => void, opts?: boolean | { capture?: boolean }) => {
+        listeners.push({
+          type,
+          fn,
+          capture: opts === true || (typeof opts === 'object' && !!opts.capture),
+        });
+      },
+      removeEventListener: () => {},
+      dispatchEvent: () => true,
+      setTimeout,
+      clearTimeout,
+      close: () => {},
+      focus: () => {},
+    },
+  });
+
+  const { default: App } = await server.ssrLoadModule('/src/App.tsx') as {
+    default: () => { props: { children: Array<{ props?: Record<string, unknown> } | false | null> } };
+  };
+  const render = () => {
+    hooks.beginRender();
+    const tree = App();
+    const children = (tree.props.children as Array<{ props?: Record<string, unknown> } | false | null>)
+      .filter((child): child is { props: Record<string, unknown> } => !!child && typeof child === 'object' && !!child.props);
+    const sidebar = children.find((child) => 'sessions' in child.props);
+    const main = children.find((child) => child.props.className === 'main');
+    const terminal = main?.props.children as { props?: Record<string, unknown> } | undefined;
+    return {
+      activeId: sidebar?.props.activeId as string | null,
+      unread: sidebar?.props.unread as Set<string>,
+      focusSeq: terminal?.props?.focusSeq as number,
+    };
+  };
+
+  render();
+  for (const effect of hooks.effects) effect();
+  await new Promise(setImmediate);
+  render();
+
+  const socketOptions = (globalThis as typeof globalThis & {
+    __webtabinalAppTest: {
+      socketOptions: { onMessage: (message: unknown) => void };
+    };
+  }).__webtabinalAppTest.socketOptions;
+  socketOptions.onMessage({
+    t: 'notify',
+    sid: 'b',
+    title: 'Approval needed',
+    body: 'Codex is waiting',
+  });
+  await new Promise(setImmediate);
+
+  let view = render();
+  assert.equal(view.activeId, 'a');
+  assert.equal(view.unread.has('b'), true, 'missing permission must not suppress unread state');
+
+  const activation = listeners.find((listener) => listener.type === NATIVE_NOTIFICATION_ACTIVATION_EVENT);
+  assert.ok(activation, 'native activation listener must be installed');
+  activation.fn({ detail: 'b' });
+
+  view = render();
+  assert.equal(view.activeId, 'b');
+  assert.equal(view.unread.has('b'), false);
+  assert.equal(view.focusSeq, 1, 'activation must use the normal selection path and restore terminal focus');
 });
 
 type Listener = {

@@ -112,31 +112,57 @@ make build
 
 ## 通知
 
-コマンド完了（タブが非アクティブ、またはウィンドウがフォーカスされていないとき）と、ターミナルが受け取った OSC 9 / OSC 99（エージェントの承認待ちなど）で macOS 通知を出します。アクティブなタブかつフォーカス中は出しません（`notification.always` で上書き）。待ち通知は `notification.min_duration_ms` の対象外です。
+コマンド完了（タブが非アクティブ、またはウィンドウがフォーカスされていないとき）と、ターミナルが受け取った OSC 9 / OSC 99（エージェントの完了・承認待ちなど）で通知を出します。ネイティブ `.app` では macOS 通知、ブラウザでは Web Notification を使い、両方を同時に出すことはありません。待ち通知は `notification.min_duration_ms` の対象外です。
 
-WebTabinal が未知のターミナル扱いだと、コーディングエージェントが OSC を出さないことがあります。その場合は次の最短設定で OSC 9 を有効にします。
+最初に WebTabinal の「設定 → 通知」を開き、「通知を有効にする」がオンであることを確認してください。「システム通知の許可が必要です」と表示されたら「通知を許可」をクリックします。「許可されていません」なら macOS の「システム設定 → 通知 → WebTabinal」、ブラウザ版ならサイト別の通知設定から許可してください。許可状態は「通知」画面を開いたときと、WebTabinal が再びフォーカスされたときに更新されます。
 
-**Codex**（`~/.codex/config.toml`）:
+### Codex
+
+WebTabinal が未知のターミナル扱いになっても確実に OSC 9 を送るよう、`~/.codex/config.toml` で通知種別と方式を明示します。
 
 ```toml
 [tui]
 notifications = ["agent-turn-complete", "approval-requested"]
 notification_method = "osc9"
+notification_condition = "unfocused"
 ```
 
-**cursor-agent**（`~/.cursor/cli-config.json`）: `"notifications": true`（既定でオンのことがあります）。出ない場合はフックから OSC 9 を書いてください。
+`notification_condition = "unfocused"` は **Codex が OSC 9 を送る条件**です。前面でも Codex に送らせるには `"always"` にします。WebTabinal の `notification.always` は、**受信済みのイベントを前面のアクティブタブでも表示するか**を決める別の設定です。操作中にも必ず表示したい場合は、Codex 側を `"always"`、WebTabinal 側の「操作中も通知する」をオンにします。詳細は [Codex configuration reference](https://developers.openai.com/codex/config-reference) を参照してください。
 
-**Claude Code**（`~/.claude/settings.json`）。即時に出すなら `PermissionRequest`、少し待ってからなら `Notification`:
+### Claude Code
+
+`~/.claude/settings.json` に次のフックを追加します。`Stop` はメインエージェントの応答完了時、`PermissionRequest` は承認ダイアログの直前、`Notification` の `idle_prompt` は入力待ちのアイドル通知時に OSC 9 を送ります。
 
 ```json
 {
   "hooks": {
-    "Notification": [
+    "Stop": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "printf '\\033]9;Claude Code needs your attention\\007' > /dev/tty"
+            "command": "printf '\\033]9;Claude Code turn complete\\007' > /dev/tty"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "printf '\\033]9;Claude Code needs approval\\007' > /dev/tty"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "idle_prompt",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "printf '\\033]9;Claude Code is waiting for input\\007' > /dev/tty"
           }
         ]
       }
@@ -144,6 +170,30 @@ notification_method = "osc9"
   }
 }
 ```
+
+`/dev/tty` へ書くことで、フックの標準出力ではなく Claude Code を実行中の WebTabinal セッションへ送ります。フックの仕様は [Claude Code hooks reference](https://code.claude.com/docs/en/hooks) を参照してください。
+
+### Cursor Agent
+
+Cursor Agent `2026.08.11-e8db854` で `~/.cursor/cli-config.json` の `"notifications": true` を有効にし、応答完了までの TTY 出力を検証しました。このバージョンは OSC 0 によるタイトル更新のみを出力し、WebTabinal が通知として受け取る OSC 9 / OSC 99 / OSC 777 は出力しませんでした。そのため、このバージョンの組み込み通知は WebTabinal では非対応です。OSC 0 の終端に使われる BEL やプロセス状態は通知の根拠にしません（通常のターミナル操作による誤通知を避けるためです）。
+
+### OSC 9 単体プローブ
+
+エージェント側と WebTabinal 側のどちらに原因があるかを切り分けるには、WebTabinal 内のターミナルから次を実行します。
+
+```bash
+./scripts/osc9-notification-probe.sh
+```
+
+これで通知が出れば WebTabinal の OSC 受信から通知までは正常で、エージェント側の出力設定を確認できます。通知の代わりにタブの未読ドットだけが付く場合も、WebTabinal までイベントが届いているので通知許可とフォーカス条件を確認します。
+
+| 症状 | 切り分け対象 | 確認・対処 |
+|------|------------------|------------|
+| エージェント完了時に未読ドットも通知も出ない | エージェントのイベント出力 | OSC 9 プローブを実行し、プローブだけ成功するなら Codex / Claude Code の設定と `/dev/tty` 出力を確認する |
+| 未読ドットは付くが通知が出ない | WebTabinal の通知有効化・許可 | 「設定 → 通知」で有効化と正規化された許可状態を確認する |
+| 背景では出るが前面のアクティブタブでは出ない | アプリのフォーカス抑制 | WebTabinal の「操作中も通知する」をオンにする。Codex が元イベントを送るには `notification_condition = "always"` も必要 |
+| 許可状態が「許可されていません」 | macOS / ブラウザの許可 | macOS の「システム設定 → 通知 → WebTabinal」、またはブラウザのサイト設定で許可し、WebTabinal へフォーカスを戻す |
+| `.app` 更新後も旧挙動、または通知が重複する | 実行中の旧デーモン / 旧アプリ | [デスクトップアプリの更新](#デスクトップアプリの更新) の手順で古いデーモンを停止し、新しい `.app` から再起動する |
 
 ## LaunchAgent（任意: ログイン時の常駐）
 

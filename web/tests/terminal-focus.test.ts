@@ -18,12 +18,12 @@ test('terminal focus is applied only when no modal is open', () => {
 test('App requests terminal focus on tab select and new tab, not memo edit', () => {
   const app = readFileSync(join(root, 'src/App.tsx'), 'utf8');
 
-  const select = app.match(/const select = \(id: string\) => \{[\s\S]*?\n  \};/);
+  const select = app.match(/const select = useCallback\(\(id: string\) => \{[\s\S]*?\n  \}, \[[^\]]*\]\);/);
   assert.ok(select, 'select() must exist');
   assert.match(select[0], /setFocusSeq/, 'tab select (including the active tab) must request focus');
   assert.match(app, /select\(s\.id\)/, 'Cmd+1..9 must go through select()');
 
-  const createTab = app.match(/const createTab = async \(\) => \{[\s\S]*?\n  \};/);
+  const createTab = app.match(/const createTab = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]*\]\);/);
   assert.ok(createTab, 'createTab() must exist');
   assert.match(createTab[0], /setFocusSeq/, 'new tab must request focus');
 

@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import UserNotifications
 import WebKit
 
 private let appName = "WebTabinal"
@@ -17,12 +18,25 @@ private final class DesktopWebView: WKWebView {
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavigationDelegate, WKUIDelegate, NSWindowDelegate {
+final class AppDelegate: NSObject,
+    NSApplicationDelegate,
+    WKScriptMessageHandler,
+    WKScriptMessageHandlerWithReply,
+    WKNavigationDelegate,
+    WKUIDelegate,
+    NSWindowDelegate,
+    UNUserNotificationCenterDelegate {
     private var window: NSWindow!
     private var webView: WKWebView!
     private var port = defaultPort
     private var logPath: String = ""
     private var initialLoadFinished = false
+    private let userNotificationCenter = UNUserNotificationCenter.current()
+    private lazy var notificationService = NativeNotificationService(
+        center: SystemUserNotificationCenterClient(center: userNotificationCenter)
+    )
+    private var notificationBridge: NotificationBridge!
+    private let notificationActivation = NotificationActivationCoordinator()
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         setupMainMenu()
@@ -48,6 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         }
 
         buildWindow()
+        userNotificationCenter.delegate = self
 
         if !webTabinalListening(port: port) {
             do {
@@ -87,6 +102,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         let config = WKWebViewConfiguration()
         let ucc = config.userContentController
         ucc.add(self, name: "webtabinal")
+        notificationBridge = NotificationBridge(
+            service: notificationService,
+            expectedOrigin: NotificationBridgeOrigin(scheme: "http", host: "127.0.0.1", port: port)
+        )
+        ucc.addScriptMessageHandler(
+            self,
+            contentWorld: .page,
+            name: "webtabinalNotifications"
+        )
         let bootstrap = """
         window.__WEBTABINAL_DESKTOP__ = true;
         (function() {
@@ -318,6 +342,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         initialLoadFinished = true
+        notificationActivation.markReady { [weak self] sessionID in
+            self?.deliverNotificationActivation(sessionID: sessionID)
+        }
         webView.becomeFirstResponder()
     }
 
@@ -436,6 +463,64 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
                 self?.pasteFromPasteboard()
             }
         }
+    }
+
+    func userContentController(
+        _ userContentController: WKUserContentController,
+        didReceive message: WKScriptMessage,
+        replyHandler: @escaping (Any?, String?) -> Void
+    ) {
+        guard message.name == "webtabinalNotifications" else {
+            replyHandler(nil, "unknown script message handler")
+            return
+        }
+        let origin = message.frameInfo.securityOrigin
+        notificationBridge.handle(
+            message.body,
+            isMainFrame: message.frameInfo.isMainFrame,
+            scheme: origin.protocol,
+            host: origin.host,
+            port: origin.port,
+            reply: replyHandler
+        )
+    }
+
+    // MARK: - UNUserNotificationCenterDelegate
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler(foregroundNotificationPresentationOptions())
+    }
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        guard let sessionID = response.notification.request.content.userInfo["sid"] as? String,
+              !sessionID.isEmpty else {
+            completionHandler()
+            return
+        }
+        DispatchQueue.main.async { [weak self] in
+            guard let self else {
+                completionHandler()
+                return
+            }
+            self.showWindow()
+            self.notificationActivation.receive(sessionID: sessionID) { [weak self] pendingSessionID in
+                self?.deliverNotificationActivation(sessionID: pendingSessionID)
+            }
+            completionHandler()
+        }
+    }
+
+    private func deliverNotificationActivation(sessionID: String) {
+        guard webView != nil else { return }
+        webView.evaluateJavaScript(notificationActivationJavaScript(sessionID: sessionID))
     }
 }
 

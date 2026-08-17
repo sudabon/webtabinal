@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import UserNotifications
 
 enum ConfigPortError: Error {
     case readFailed(path: String, underlying: Error)
@@ -212,4 +213,300 @@ func javaScriptStringLiteral(_ value: String) -> String {
     } catch {
         return "\"\""
     }
+}
+
+enum DesktopNotificationPermission: String, Equatable {
+    case `default`
+    case granted
+    case denied
+    case unsupported
+}
+
+func desktopNotificationPermission(for status: UNAuthorizationStatus) -> DesktopNotificationPermission {
+    switch status {
+    case .notDetermined:
+        return .default
+    case .denied:
+        return .denied
+    case .authorized, .provisional, .ephemeral:
+        return .granted
+    @unknown default:
+        return .unsupported
+    }
+}
+
+protocol UserNotificationCenterClient: AnyObject {
+    func getAuthorizationStatus(completion: @escaping (UNAuthorizationStatus) -> Void)
+    func requestAuthorization(
+        options: UNAuthorizationOptions,
+        completion: @escaping (Bool, Error?) -> Void
+    )
+    func add(_ request: UNNotificationRequest, completion: @escaping (Error?) -> Void)
+}
+
+final class SystemUserNotificationCenterClient: UserNotificationCenterClient {
+    private let center: UNUserNotificationCenter
+
+    init(center: UNUserNotificationCenter) {
+        self.center = center
+    }
+
+    func getAuthorizationStatus(completion: @escaping (UNAuthorizationStatus) -> Void) {
+        center.getNotificationSettings { settings in
+            completion(settings.authorizationStatus)
+        }
+    }
+
+    func requestAuthorization(
+        options: UNAuthorizationOptions,
+        completion: @escaping (Bool, Error?) -> Void
+    ) {
+        center.requestAuthorization(options: options, completionHandler: completion)
+    }
+
+    func add(_ request: UNNotificationRequest, completion: @escaping (Error?) -> Void) {
+        center.add(request, withCompletionHandler: completion)
+    }
+}
+
+protocol NativeNotificationServicing: AnyObject {
+    func getPermission(completion: @escaping (DesktopNotificationPermission) -> Void)
+    func requestPermission(
+        completion: @escaping (Result<DesktopNotificationPermission, Error>) -> Void
+    )
+    func show(
+        sessionID: String,
+        title: String,
+        body: String,
+        completion: @escaping (Result<Void, Error>) -> Void
+    )
+}
+
+enum NativeNotificationServiceError: LocalizedError {
+    case authorizationFailed(String)
+    case permissionNotGranted(DesktopNotificationPermission)
+    case schedulingFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .authorizationFailed(let message):
+            return "notification authorization failed: \(message)"
+        case .permissionNotGranted(let permission):
+            return "notification permission is \(permission.rawValue)"
+        case .schedulingFailed(let message):
+            return "notification scheduling failed: \(message)"
+        }
+    }
+}
+
+final class NativeNotificationService: NativeNotificationServicing {
+    private let center: UserNotificationCenterClient
+    private let makeIdentifier: () -> String
+
+    init(
+        center: UserNotificationCenterClient,
+        makeIdentifier: @escaping () -> String = {
+            "webtabinal-\(UUID().uuidString)"
+        }
+    ) {
+        self.center = center
+        self.makeIdentifier = makeIdentifier
+    }
+
+    func getPermission(completion: @escaping (DesktopNotificationPermission) -> Void) {
+        center.getAuthorizationStatus { status in
+            completion(desktopNotificationPermission(for: status))
+        }
+    }
+
+    func requestPermission(
+        completion: @escaping (Result<DesktopNotificationPermission, Error>) -> Void
+    ) {
+        center.requestAuthorization(options: [.alert]) { _, error in
+            if let error {
+                completion(.failure(NativeNotificationServiceError.authorizationFailed(error.localizedDescription)))
+                return
+            }
+            self.getPermission { permission in
+                completion(.success(permission))
+            }
+        }
+    }
+
+    func show(
+        sessionID: String,
+        title: String,
+        body: String,
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
+        getPermission { permission in
+            guard permission == .granted else {
+                completion(.failure(NativeNotificationServiceError.permissionNotGranted(permission)))
+                return
+            }
+
+            let content = UNMutableNotificationContent()
+            content.title = title
+            content.body = body
+            content.userInfo = ["sid": sessionID]
+            content.sound = nil
+            let request = UNNotificationRequest(
+                identifier: self.makeIdentifier(),
+                content: content,
+                trigger: nil
+            )
+            self.center.add(request) { error in
+                if let error {
+                    completion(.failure(NativeNotificationServiceError.schedulingFailed(error.localizedDescription)))
+                } else {
+                    completion(.success(()))
+                }
+            }
+        }
+    }
+}
+
+struct NotificationBridgeOrigin: Equatable {
+    let scheme: String
+    let host: String
+    let port: Int
+
+    func matches(scheme: String, host: String, port: Int) -> Bool {
+        self.scheme == scheme && self.host == host && self.port == port
+    }
+}
+
+enum NotificationBridgeError: LocalizedError {
+    case nonMainFrame
+    case untrustedOrigin
+    case invalidMessage
+    case invalidOperation
+    case invalidNotification
+
+    var errorDescription: String? {
+        switch self {
+        case .nonMainFrame:
+            return "notification bridge rejected a non-main-frame message"
+        case .untrustedOrigin:
+            return "notification bridge rejected an untrusted origin"
+        case .invalidMessage:
+            return "notification bridge expected an object message"
+        case .invalidOperation:
+            return "notification bridge received an invalid operation"
+        case .invalidNotification:
+            return "notification bridge requires non-empty string sid, title, and body fields"
+        }
+    }
+}
+
+final class NotificationBridge {
+    typealias Reply = (Any?, String?) -> Void
+
+    private let service: NativeNotificationServicing
+    private let expectedOrigin: NotificationBridgeOrigin
+
+    init(service: NativeNotificationServicing, expectedOrigin: NotificationBridgeOrigin) {
+        self.service = service
+        self.expectedOrigin = expectedOrigin
+    }
+
+    func handle(
+        _ rawMessage: Any,
+        isMainFrame: Bool,
+        scheme: String,
+        host: String,
+        port: Int,
+        reply: @escaping Reply
+    ) {
+        guard isMainFrame else {
+            reject(.nonMainFrame, reply: reply)
+            return
+        }
+        guard expectedOrigin.matches(scheme: scheme, host: host, port: port) else {
+            reject(.untrustedOrigin, reply: reply)
+            return
+        }
+        guard let message = rawMessage as? [String: Any] else {
+            reject(.invalidMessage, reply: reply)
+            return
+        }
+        guard let operation = message["operation"] as? String else {
+            reject(.invalidOperation, reply: reply)
+            return
+        }
+
+        switch operation {
+        case "getPermission":
+            service.getPermission { permission in
+                reply(permission.rawValue, nil)
+            }
+        case "requestPermission":
+            service.requestPermission { result in
+                switch result {
+                case .success(let permission):
+                    reply(permission.rawValue, nil)
+                case .failure(let error):
+                    reply(nil, error.localizedDescription)
+                }
+            }
+        case "show":
+            guard let sessionID = requiredString(message["sid"]),
+                  let title = requiredString(message["title"]),
+                  let body = requiredString(message["body"]) else {
+                reject(.invalidNotification, reply: reply)
+                return
+            }
+            service.show(sessionID: sessionID, title: title, body: body) { result in
+                switch result {
+                case .success:
+                    reply(true, nil)
+                case .failure(let error):
+                    reply(nil, error.localizedDescription)
+                }
+            }
+        default:
+            reject(.invalidOperation, reply: reply)
+        }
+    }
+
+    private func requiredString(_ value: Any?) -> String? {
+        guard let string = value as? String,
+              !string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return string
+    }
+
+    private func reject(_ error: NotificationBridgeError, reply: Reply) {
+        reply(nil, error.localizedDescription)
+    }
+}
+
+func foregroundNotificationPresentationOptions() -> UNNotificationPresentationOptions {
+    [.banner, .list]
+}
+
+final class NotificationActivationCoordinator {
+    private(set) var pendingSessionID: String?
+    private var ready = false
+
+    func receive(sessionID: String, deliver: (String) -> Void) {
+        if ready {
+            deliver(sessionID)
+        } else {
+            pendingSessionID = sessionID
+        }
+    }
+
+    func markReady(deliver: (String) -> Void) {
+        ready = true
+        guard let pendingSessionID else { return }
+        self.pendingSessionID = nil
+        deliver(pendingSessionID)
+    }
+}
+
+func notificationActivationJavaScript(sessionID: String) -> String {
+    let literal = javaScriptStringLiteral(sessionID)
+    return "window.dispatchEvent(new CustomEvent('webtabinal-native-notification-activated', { detail: \(literal) }));"
 }

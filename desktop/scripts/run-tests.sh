@@ -19,6 +19,7 @@ echo "==> compiling desktop support tests"
 swiftc \
   -target "${WEBTABINAL_ARCH}-apple-macosx13.0" \
   -O \
+  -framework UserNotifications \
   -o "${OUT}" \
   "${DESKTOP}/Sources/DesktopSupport.swift" \
   "${DESKTOP}/Tests/main.swift"

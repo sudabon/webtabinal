@@ -15,11 +15,29 @@ import {
   resolveChordKey,
   type KeyBindings,
 } from './keymap';
+import {
+  createNotificationProvider,
+  NATIVE_NOTIFICATION_ACTIVATION_EVENT,
+  type NotificationPermissionState,
+} from './notification-provider';
 import { useColorScheme } from './theme';
 import { agentWaitContent, shouldRaiseDesktopNotification } from './notify';
-import type { AppConfig, ColorScheme, ServerMsg, SessionInfo } from './types';
+import type {
+  AppConfig,
+  ColorScheme,
+  NotificationConfig,
+  ServerMsg,
+  SessionInfo,
+} from './types';
 import { cwdBasename, isStandalone, sessionBootstrapAction } from './util';
 import { TerminalSocket } from './ws';
+
+const DEFAULT_NOTIFICATION_CONFIG: NotificationConfig = {
+  enabled: true,
+  always: false,
+  min_duration_ms: 0,
+  sound: false,
+};
 
 export default function App() {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
@@ -57,6 +75,10 @@ export default function App() {
 
   const theme = useColorScheme(config?.color_scheme);
   const badgeCount = unread.size;
+  const notificationProvider = useMemo(() => createNotificationProvider(), []);
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermissionState>(
+    notificationProvider.kind === 'unsupported' ? 'unsupported' : 'default',
+  );
 
   const reportActionError = useCallback((err: unknown) => {
     const message = bootErrorMessage(err);
@@ -127,6 +149,38 @@ export default function App() {
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [sessions]);
 
+  const select = useCallback((id: string) => {
+    setActiveId(id);
+    setFocusSeq((n) => n + 1);
+    setUnread((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    const onActivate = (event: Event) => {
+      const sid = (event as CustomEvent<unknown>).detail;
+      if (typeof sid !== 'string' || !sessionsRef.current.some((session) => session.id === sid)) return;
+      select(sid);
+    };
+    window.addEventListener(NATIVE_NOTIFICATION_ACTIVATION_EVENT, onActivate);
+    return () => window.removeEventListener(NATIVE_NOTIFICATION_ACTIVATION_EVENT, onActivate);
+  }, [select]);
+
+  const showNotification = useCallback((sid: string, title: string, body: string) => {
+    void notificationProvider.show({
+      sid,
+      title,
+      body,
+      onActivate: () => select(sid),
+    }).catch((err: unknown) => {
+      console.error('Failed to deliver notification', err);
+    });
+  }, [notificationProvider, select]);
+
   const notifyCompletion = useCallback((sid: string, info: SessionInfo) => {
     const cfg = configRef.current;
     if (!cfg) return;
@@ -145,17 +199,11 @@ export default function App() {
       setUnread((prev) => new Set(prev).add(sid));
     }
 
-    if ('Notification' in window && Notification.permission === 'granted') {
-      const ok = info.exit === 0 || info.exit == null;
-      const title = `${ok ? '✓' : '✗'} ${info.command}${ok ? '' : ` (exit ${info.exit})`}`;
-      const body = `${cwdBasename(info.cwd)} ・ ${Math.round((info.run_ms ?? 0) / 1000)}s`;
-      const n = new Notification(title, { body });
-      n.onclick = () => {
-        window.focus();
-        setActiveId(sid);
-      };
-    }
-  }, []);
+    const ok = info.exit === 0 || info.exit == null;
+    const title = `${ok ? '✓' : '✗'} ${info.command}${ok ? '' : ` (exit ${info.exit})`}`;
+    const body = `${cwdBasename(info.cwd)} ・ ${Math.round((info.run_ms ?? 0) / 1000)}s`;
+    showNotification(sid, title, body);
+  }, [showNotification]);
 
   const notifyAgentWait = useCallback((sid: string, title: string, body: string) => {
     const cfg = configRef.current;
@@ -175,14 +223,8 @@ export default function App() {
       setUnread((prev) => new Set(prev).add(sid));
     }
 
-    if ('Notification' in window && Notification.permission === 'granted') {
-      const n = new Notification(content.title, { body: content.body });
-      n.onclick = () => {
-        window.focus();
-        setActiveId(sid);
-      };
-    }
-  }, []);
+    showNotification(sid, content.title, content.body);
+  }, [showNotification]);
 
   useEffect(() => {
     let sock: TerminalSocket | null = null;
@@ -196,10 +238,6 @@ export default function App() {
         return;
       }
       setConfig(loaded.config);
-
-      if (isStandalone() && 'Notification' in window && Notification.permission === 'default') {
-        void Notification.requestPermission();
-      }
 
       sock = new TerminalSocket({
         onMessage: (msg) => {
@@ -302,18 +340,7 @@ export default function App() {
     prevCount.current = count;
   }, [sessions, config]);
 
-  const select = (id: string) => {
-    setActiveId(id);
-    setFocusSeq((n) => n + 1);
-    setUnread((prev) => {
-      if (!prev.has(id)) return prev;
-      const next = new Set(prev);
-      next.delete(id);
-      return next;
-    });
-  };
-
-  const createTab = async () => {
+  const createTab = useCallback(async () => {
     try {
       const s = await api.createSession();
       setBootError(null);
@@ -325,7 +352,7 @@ export default function App() {
         setBootError(bootErrorMessage(err));
       }
     }
-  };
+  }, [emptyVisible, reportActionError]);
 
   const closeTab = async (id: string) => {
     const s = sessions.find((x) => x.id === id);
@@ -358,7 +385,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [settingsOpen]);
+  }, [settingsOpen, select, createTab]);
 
   useEffect(() => {
     if (settingsOpen || memoSessionId != null) clearPending();
@@ -392,7 +419,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [armPending, clearPending]);
+  }, [armPending, clearPending, select]);
 
   const width = config?.sidebar_width ?? 240;
 
@@ -468,6 +495,31 @@ export default function App() {
     },
     [reportActionError],
   );
+
+  const changeNotification = useCallback(
+    async (patch: Partial<NotificationConfig>) => {
+      try {
+        const next = await api.patchConfig({ notification: patch });
+        setConfig(next);
+      } catch (err) {
+        reportActionError(err);
+        throw err;
+      }
+    },
+    [reportActionError],
+  );
+
+  const refreshNotificationPermission = useCallback(async () => {
+    const permission = await notificationProvider.getPermission();
+    setNotificationPermission(permission);
+    return permission;
+  }, [notificationProvider]);
+
+  const requestNotificationPermission = useCallback(async () => {
+    const permission = await notificationProvider.requestPermission();
+    setNotificationPermission(permission);
+    return permission;
+  }, [notificationProvider]);
 
   if (emptyVisible && sessions.length === 0) {
     return (
@@ -555,6 +607,11 @@ export default function App() {
         onShellChange={changeShell}
         keyBindings={config?.key_bindings ?? DEFAULT_KEY_BINDINGS}
         onKeyBindingsChange={changeKeyBindings}
+        notification={config?.notification ?? DEFAULT_NOTIFICATION_CONFIG}
+        notificationPermission={notificationPermission}
+        onNotificationChange={changeNotification}
+        onNotificationPermissionRefresh={refreshNotificationPermission}
+        onNotificationPermissionRequest={requestNotificationPermission}
         onClose={() => setSettingsOpen(false)}
       />
       <TabMemoModal

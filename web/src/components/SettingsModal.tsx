@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ColorScheme, KeyBindings } from '../types';
+import type { NotificationPermissionState } from '../notification-provider';
+import type { ColorScheme, KeyBindings, NotificationConfig } from '../types';
 import { AppearanceSettings } from './AppearanceSettings';
 import { GeneralSettings } from './GeneralSettings';
 import { KeyboardSettings } from './KeyboardSettings';
+import { NotificationsSettings } from './NotificationsSettings';
 
 const CATEGORIES = [
   { id: 'appearance', label: '外観' },
   { id: 'general', label: '一般' },
+  { id: 'notifications', label: '通知' },
   { id: 'keyboard', label: 'キーボード' },
 ] as const;
 
@@ -20,6 +23,11 @@ type Props = {
   onShellChange: (shell: string) => void | Promise<void>;
   keyBindings: KeyBindings;
   onKeyBindingsChange: (bindings: KeyBindings) => void | Promise<void>;
+  notification: NotificationConfig;
+  notificationPermission: NotificationPermissionState;
+  onNotificationChange: (patch: Partial<NotificationConfig>) => void | Promise<void>;
+  onNotificationPermissionRefresh: () => Promise<NotificationPermissionState>;
+  onNotificationPermissionRequest: () => Promise<NotificationPermissionState>;
   onClose: () => void;
 };
 
@@ -31,6 +39,11 @@ export function SettingsModal({
   onShellChange,
   keyBindings,
   onKeyBindingsChange,
+  notification,
+  notificationPermission,
+  onNotificationChange,
+  onNotificationPermissionRefresh,
+  onNotificationPermissionRequest,
   onClose,
 }: Props) {
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -79,6 +92,7 @@ export function SettingsModal({
               key={c.id}
               className={`settings-nav-item${category === c.id ? ' active' : ''}`}
               type="button"
+              aria-current={category === c.id ? 'page' : undefined}
               onClick={() => setCategory(c.id)}
             >
               {c.label}
@@ -93,6 +107,14 @@ export function SettingsModal({
             <AppearanceSettings colorScheme={colorScheme} onColorSchemeChange={onColorSchemeChange} />
           ) : category === 'general' ? (
             <GeneralSettings shell={shell} onShellChange={onShellChange} />
+          ) : category === 'notifications' ? (
+            <NotificationsSettings
+              notification={notification}
+              permissionState={notificationPermission}
+              onNotificationChange={onNotificationChange}
+              onPermissionRefresh={onNotificationPermissionRefresh}
+              onPermissionRequest={onNotificationPermissionRequest}
+            />
           ) : (
             <KeyboardSettings bindings={keyBindings} onBindingsChange={onKeyBindingsChange} />
           )}

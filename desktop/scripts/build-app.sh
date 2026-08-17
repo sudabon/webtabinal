@@ -31,6 +31,7 @@ swiftc \
   -target "${WEBTABINAL_ARCH}-apple-macosx13.0" \
   -O \
   -framework AppKit \
+  -framework UserNotifications \
   -framework WebKit \
   -o "${MACOS}/WebTabinal" \
   "${DESKTOP}/Sources/DesktopSupport.swift" \

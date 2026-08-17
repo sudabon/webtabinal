@@ -18,6 +18,13 @@ export type SessionInfo = {
 
 export type ColorScheme = 'light' | 'dark' | 'system';
 
+export type NotificationConfig = {
+  enabled: boolean;
+  always: boolean;
+  min_duration_ms: number;
+  sound: boolean;
+};
+
 export type AppConfig = {
   port: number;
   shell: string;
@@ -27,17 +34,16 @@ export type AppConfig = {
   font_size: number;
   sidebar_width: number;
   color_scheme: ColorScheme;
-  notification: {
-    enabled: boolean;
-    always: boolean;
-    min_duration_ms: number;
-    sound: boolean;
-  };
+  notification: NotificationConfig;
   confirm_close_running: boolean;
   copy_on_select: boolean;
   quit_when_no_tabs: boolean;
   close_tab_on_clean_exit: boolean;
   key_bindings: KeyBindings;
+};
+
+export type AppConfigPatch = Omit<Partial<AppConfig>, 'notification'> & {
+  notification?: Partial<NotificationConfig>;
 };
 
 export type ServerMsg =
