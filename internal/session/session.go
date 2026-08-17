@@ -142,10 +142,7 @@ func Create(opts CreateOpts) (*Session, error) {
 	}
 
 	id := uuid.NewString()
-	env := mergeThemeEnv(append(os.Environ(),
-		fmt.Sprintf("WEBTABINAL_SESSION_ID=%s", id),
-		"TERM=xterm-256color",
-	), opts.Palette)
+	env := shellEnv(id, opts.Palette)
 	injected, err := integration.ApplyZshInjection(env, opts.Shell)
 	if err != nil {
 		if opts.Logger != nil {
@@ -273,6 +270,14 @@ func (s *Session) replyColorQueries(ids []int) {
 		return
 	}
 	_, _ = ptmx.Write(report)
+}
+
+func shellEnv(id string, p osc.Palette) []string {
+	env := append(os.Environ(),
+		fmt.Sprintf("WEBTABINAL_SESSION_ID=%s", id),
+		"TERM=xterm-256color",
+	)
+	return withLocaleEnv(mergeThemeEnv(env, p), detectUTF8Locale())
 }
 
 func mergeThemeEnv(env []string, p osc.Palette) []string {
