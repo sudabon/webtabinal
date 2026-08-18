@@ -18,6 +18,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { SessionInfo } from '../types';
 import { cwdBasename, formatElapsed } from '../util';
+import { AgentStatePill } from './AgentStatePill';
 
 const MEMO_TOOLTIP_DELAY_MS = 1000;
 
@@ -177,6 +178,7 @@ function SortableTab({
         {cwdBasename(session.cwd)}
         {!session.integrated && <span className="no-int" title="shell integration off">◌</span>}
         {unread && <span className="unread" title="unread completion" />}
+        <AgentStatePill agent={session.agent} state={session.agent_state} />
       </div>
       <div className="tab-cmd" style={{ opacity: cmdOpacity }} title={session.command}>
         {session.command || 'zsh'}

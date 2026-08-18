@@ -5,6 +5,11 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
+
+	"github.com/sudabon/webtabinal/internal/session"
+	"github.com/sudabon/webtabinal/internal/vtscreen"
 )
 
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
@@ -24,7 +29,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusCreated, sess.Info())
+	writeJSON(w, http.StatusCreated, s.hub.manager.SessionInfo(sess))
 }
 
 func (s *Server) handleDuplicateSession(w http.ResponseWriter, r *http.Request) {
@@ -34,7 +39,7 @@ func (s *Server) handleDuplicateSession(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	writeJSON(w, http.StatusCreated, sess.Info())
+	writeJSON(w, http.StatusCreated, s.hub.manager.SessionInfo(sess))
 }
 
 func (s *Server) handleRestartSession(w http.ResponseWriter, r *http.Request) {
@@ -44,7 +49,7 @@ func (s *Server) handleRestartSession(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	writeJSON(w, http.StatusOK, sess.Info())
+	writeJSON(w, http.StatusOK, s.hub.manager.SessionInfo(sess))
 }
 
 func (s *Server) handlePatchSession(w http.ResponseWriter, r *http.Request) {
@@ -65,7 +70,7 @@ func (s *Server) handlePatchSession(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	writeJSON(w, http.StatusOK, sess.Info())
+	writeJSON(w, http.StatusOK, s.hub.manager.SessionInfo(sess))
 }
 
 func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
@@ -107,5 +112,72 @@ func (s *Server) handlePatchConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if s.hub != nil && s.hub.manager != nil {
+		s.hub.manager.ApplyStateConfig(cfg.State)
+	}
 	writeJSON(w, http.StatusOK, cfg)
+}
+
+func (s *Server) handleStateSnapshot(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	lines, buf, err := parseSnapshotQuery(r)
+	if err != nil {
+		s.logSnapshot(id, http.StatusBadRequest)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if s.hub == nil || s.hub.manager == nil {
+		s.logSnapshot(id, http.StatusNotFound)
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+	diag, err := s.hub.manager.StateSnapshot(id, lines, buf)
+	if err != nil {
+		if errors.Is(err, session.ErrNotFound) {
+			s.logSnapshot(id, http.StatusNotFound)
+			http.Error(w, "session not found", http.StatusNotFound)
+			return
+		}
+		if errors.Is(err, session.ErrScreenUnavailable) {
+			s.logSnapshot(id, http.StatusConflict)
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error":   "screen_unavailable",
+				"message": "screen model is unavailable",
+			})
+			return
+		}
+		s.logSnapshot(id, http.StatusInternalServerError)
+		http.Error(w, "snapshot failed", http.StatusInternalServerError)
+		return
+	}
+	s.logSnapshot(id, http.StatusOK)
+	writeJSON(w, http.StatusOK, diag)
+}
+
+func parseSnapshotQuery(r *http.Request) (int, vtscreen.BufferKind, error) {
+	lines := 15
+	if raw := strings.TrimSpace(r.URL.Query().Get("lines")); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n > 200 {
+			return 0, "", errors.New("lines must be an integer from 1 to 200")
+		}
+		lines = n
+	}
+	buf := vtscreen.BufferActive
+	if raw := strings.TrimSpace(r.URL.Query().Get("buffer")); raw != "" {
+		switch vtscreen.BufferKind(raw) {
+		case vtscreen.BufferActive, vtscreen.BufferPrimary, vtscreen.BufferAlternate:
+			buf = vtscreen.BufferKind(raw)
+		default:
+			return 0, "", errors.New("buffer must be active, primary, or alternate")
+		}
+	}
+	return lines, buf, nil
+}
+
+func (s *Server) logSnapshot(sessionID string, status int) {
+	if s == nil || s.logger == nil {
+		return
+	}
+	s.logger.Printf("state-snapshot session=%s status=%d", sessionID, status)
 }

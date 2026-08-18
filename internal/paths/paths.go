@@ -20,6 +20,14 @@ func SupportDir() (string, error) {
 	return filepath.Join(home, "Library", "Application Support", AppName), nil
 }
 
+func ManifestsDir() (string, error) {
+	dir, err := SupportDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "manifests"), nil
+}
+
 func LogsDir() (string, error) {
 	home, err := Home()
 	if err != nil {

@@ -22,12 +22,14 @@ import {
 } from './notification-provider';
 import { useColorScheme } from './theme';
 import { agentWaitContent, shouldRaiseDesktopNotification } from './notify';
+import { applyServerMessage } from './session-state';
 import type {
   AppConfig,
   ColorScheme,
   NotificationConfig,
   ServerMsg,
   SessionInfo,
+  StateConfig,
 } from './types';
 import { cwdBasename, isStandalone, sessionBootstrapAction } from './util';
 import { TerminalSocket } from './ws';
@@ -37,6 +39,15 @@ const DEFAULT_NOTIFICATION_CONFIG: NotificationConfig = {
   always: false,
   min_duration_ms: 0,
   sound: false,
+};
+
+export const DEFAULT_STATE_CONFIG: StateConfig = {
+  enabled: true,
+  debounce_ms: 120,
+  quiescence_ms: 1500,
+  bottom_lines: 15,
+  notify_on_blocked: true,
+  manifest_dir: '',
 };
 
 export default function App() {
@@ -255,35 +266,27 @@ export default function App() {
       setSocket(sock);
 
       function handleMsg(msg: ServerMsg) {
-        if (msg.t === 'sessions') {
-          setSessionsLoaded(true);
-          setSessions(msg.list);
-          setActiveId((cur) => {
-            if (cur && msg.list.some((s) => s.id === cur)) return cur;
-            return msg.list[0]?.id ?? null;
-          });
-        }
-        if (msg.t === 'state') {
-          setSessions((prev) => {
-            const next = prev.map((s) => {
-              if (s.id !== msg.sid) return s;
-              const wasRunning = s.state === 'running';
-              const updated: SessionInfo = {
-                ...s,
-                cwd: msg.cwd,
-                command: msg.cmd,
-                state: msg.state,
-                exit: msg.exit,
-                integrated: msg.integrated,
-                run_ms: msg.run_ms,
-              };
-              if (wasRunning && msg.state === 'idle') {
+        if (msg.t === 'sessions' || msg.t === 'state' || msg.t === 'agent_state') {
+          if (msg.t === 'sessions') {
+            setSessionsLoaded(true);
+            setActiveId((cur) => {
+              if (cur && msg.list.some((s) => s.id === cur)) return cur;
+              return msg.list[0]?.id ?? null;
+            });
+          }
+          if (msg.t === 'state') {
+            setSessions((prev) => {
+              const next = applyServerMessage(prev, msg);
+              const current = prev.find((s) => s.id === msg.sid);
+              const updated = next.find((s) => s.id === msg.sid);
+              if (current?.state === 'running' && msg.state === 'idle' && updated) {
                 queueMicrotask(() => notifyCompletion(msg.sid, updated));
               }
-              return updated;
+              return next;
             });
-            return next;
-          });
+            return;
+          }
+          setSessions((prev) => applyServerMessage(prev, msg));
         }
         if (msg.t === 'notify') {
           queueMicrotask(() => notifyAgentWait(msg.sid, msg.title, msg.body));
@@ -509,6 +512,19 @@ export default function App() {
     [reportActionError],
   );
 
+  const changeState = useCallback(
+    async (patch: Partial<StateConfig>) => {
+      try {
+        const next = await api.patchConfig({ state: patch });
+        setConfig(next);
+      } catch (err) {
+        reportActionError(err);
+        throw err;
+      }
+    },
+    [reportActionError],
+  );
+
   const refreshNotificationPermission = useCallback(async () => {
     const permission = await notificationProvider.getPermission();
     setNotificationPermission(permission);
@@ -610,6 +626,8 @@ export default function App() {
         notification={config?.notification ?? DEFAULT_NOTIFICATION_CONFIG}
         notificationPermission={notificationPermission}
         onNotificationChange={changeNotification}
+        state={config?.state ?? DEFAULT_STATE_CONFIG}
+        onStateChange={changeState}
         onNotificationPermissionRefresh={refreshNotificationPermission}
         onNotificationPermissionRequest={requestNotificationPermission}
         onClose={() => setSettingsOpen(false)}

@@ -82,6 +82,17 @@ func TestParseOSC99BarePayload(t *testing.T) {
 	}
 }
 
+func TestParseOSC777Notify(t *testing.T) {
+	var p osc.Parser
+	evs := p.Feed([]byte("\x1b]777;notify;Codex;turn complete\x07"))
+	if len(evs) != 1 {
+		t.Fatalf("expected 1 event, got %#v", evs)
+	}
+	if evs[0].Kind != osc.EventNotify || evs[0].OSC != 777 || evs[0].Title != "Codex" || evs[0].Body != "turn complete" {
+		t.Fatalf("osc777: %#v", evs[0])
+	}
+}
+
 func TestParseOSC11ColorQuery(t *testing.T) {
 	var p osc.Parser
 	evs := p.Feed([]byte("\x1b]11;?\x07"))

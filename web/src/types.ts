@@ -4,6 +4,17 @@ export type { KeyBindings };
 
 export type SessionState = 'starting' | 'idle' | 'running' | 'exited';
 
+export type AgentState = 'none' | 'idle' | 'working' | 'blocked';
+
+export type AgentStateSignal =
+  | ''
+  | 'screen'
+  | 'activity'
+  | 'osc'
+  | 'command'
+  | 'process'
+  | 'fallback';
+
 export type SessionInfo = {
   id: string;
   order: number;
@@ -14,6 +25,11 @@ export type SessionInfo = {
   integrated: boolean;
   memo: string;
   run_ms?: number;
+  agent?: string;
+  agent_state?: AgentState;
+  agent_state_since?: string;
+  agent_state_signal?: AgentStateSignal | string;
+  agent_state_detail?: string;
 };
 
 export type ColorScheme = 'light' | 'dark' | 'system';
@@ -23,6 +39,15 @@ export type NotificationConfig = {
   always: boolean;
   min_duration_ms: number;
   sound: boolean;
+};
+
+export type StateConfig = {
+  enabled: boolean;
+  debounce_ms: number;
+  quiescence_ms: number;
+  bottom_lines: number;
+  notify_on_blocked: boolean;
+  manifest_dir: string;
 };
 
 export type AppConfig = {
@@ -35,6 +60,7 @@ export type AppConfig = {
   sidebar_width: number;
   color_scheme: ColorScheme;
   notification: NotificationConfig;
+  state: StateConfig;
   confirm_close_running: boolean;
   copy_on_select: boolean;
   quit_when_no_tabs: boolean;
@@ -42,14 +68,24 @@ export type AppConfig = {
   key_bindings: KeyBindings;
 };
 
-export type AppConfigPatch = Omit<Partial<AppConfig>, 'notification'> & {
+export type AppConfigPatch = Omit<Partial<AppConfig>, 'notification' | 'state'> & {
   notification?: Partial<NotificationConfig>;
+  state?: Partial<StateConfig>;
 };
 
 export type ServerMsg =
   | { t: 'sessions'; list: SessionInfo[] }
   | { t: 'state'; sid: string; cwd: string; cmd: string; state: SessionState; exit: number | null; integrated: boolean; run_ms?: number }
-  | { t: 'notify'; sid: string; title: string; body: string }
+  | {
+      t: 'agent_state';
+      sid: string;
+      agent: string;
+      agent_state: AgentState;
+      agent_state_since: string;
+      agent_state_signal: AgentStateSignal | string;
+      agent_state_detail?: string;
+    }
+  | { t: 'notify'; sid: string; title: string; body: string; kind?: string; source?: string }
   | { t: 'output'; sid: string; data: string }
   | { t: 'replay'; sid: string; data: string; done: boolean }
   | { t: 'error'; sid?: string; code?: string; message: string };

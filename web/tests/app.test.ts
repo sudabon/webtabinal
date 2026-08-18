@@ -76,6 +76,14 @@ function appConfig(colorScheme: ColorScheme, keyBindings: KeyBindings = DEFAULT_
     sidebar_width: 240,
     color_scheme: colorScheme,
     notification: { enabled: false, always: false, min_duration_ms: 0, sound: false },
+    state: {
+      enabled: true,
+      debounce_ms: 120,
+      quiescence_ms: 1500,
+      bottom_lines: 15,
+      notify_on_blocked: true,
+      manifest_dir: '',
+    },
     confirm_close_running: true,
     copy_on_select: false,
     quit_when_no_tabs: true,
@@ -663,6 +671,115 @@ test('missing notification permission keeps unread state and native activation s
   assert.equal(view.activeId, 'b');
   assert.equal(view.unread.has('b'), false);
   assert.equal(view.focusSeq, 1, 'activation must use the normal selection path and restore terminal focus');
+});
+
+test('agent_state frames update pills without replacing shell state or dropping unread', async (t) => {
+  const hooks = new HookHarness();
+  const cfg = appConfig('system');
+  cfg.notification.enabled = true;
+  cfg.notification.always = true;
+  const api = {
+    getConfig: async () => cfg,
+    patchConfig: async (patch: Partial<AppConfig>) => ({ ...cfg, ...patch }),
+  };
+  const server = await createServer({
+    configFile: false,
+    logLevel: 'silent',
+    plugins: [mockModules(hooks, api, true), react()],
+    resolve: {
+      alias: [
+        { find: /^react$/, replacement: fileURLToPath(new URL('./app-react-mock.ts', import.meta.url)) },
+        { find: /^react\/jsx-dev-runtime$/, replacement: fileURLToPath(new URL('./app-react-mock.ts', import.meta.url)) },
+        { find: /^react\/jsx-runtime$/, replacement: fileURLToPath(new URL('./app-react-mock.ts', import.meta.url)) },
+      ],
+    },
+    server: { middlewareMode: true },
+  });
+  t.after(async () => {
+    await server.close();
+  });
+  Object.assign(globalThis, {
+    document: { hasFocus: () => false, title: '', activeElement: null },
+    window: {
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => true,
+      setTimeout,
+      clearTimeout,
+      close: () => {},
+      focus: () => {},
+    },
+  });
+  const { default: App } = await server.ssrLoadModule('/src/App.tsx') as {
+    default: () => { props: { children: Array<{ props?: Record<string, unknown> } | false | null> } };
+  };
+  const render = () => {
+    hooks.beginRender();
+    const tree = App();
+    const children = (tree.props.children as Array<{ props?: Record<string, unknown> } | false | null>)
+      .filter((child): child is { props: Record<string, unknown> } => !!child && typeof child === 'object' && !!child.props);
+    const sidebar = children.find((child) => 'sessions' in child.props);
+    return {
+      sessions: sidebar?.props.sessions as Array<{ id: string; state: string; agent_state?: string; command: string }>,
+      unread: sidebar?.props.unread as Set<string>,
+    };
+  };
+  render();
+  for (const effect of hooks.effects) effect();
+  await new Promise(setImmediate);
+  render();
+  const socketOptions = (globalThis as typeof globalThis & {
+    __webtabinalAppTest: { socketOptions: { onMessage: (message: unknown) => void } };
+  }).__webtabinalAppTest.socketOptions;
+
+  socketOptions.onMessage({
+    t: 'state',
+    sid: 'b',
+    cwd: '/',
+    cmd: 'codex',
+    state: 'running',
+    exit: null,
+    integrated: true,
+    run_ms: 10,
+  });
+  socketOptions.onMessage({
+    t: 'agent_state',
+    sid: 'b',
+    agent: 'codex',
+    agent_state: 'blocked',
+    agent_state_since: '2026-01-01T00:00:00Z',
+    agent_state_signal: 'screen',
+  });
+  socketOptions.onMessage({
+    t: 'notify',
+    sid: 'b',
+    title: 'Codex',
+    body: 'Waiting for input',
+    kind: 'agent_blocked',
+    source: 'screen',
+  });
+  await new Promise(setImmediate);
+  let view = render();
+  const tab = view.sessions.find((s) => s.id === 'b');
+  assert.equal(tab?.state, 'running');
+  assert.equal(tab?.agent_state, 'blocked');
+  assert.equal(tab?.command, 'codex');
+  assert.equal(view.unread.has('b'), true);
+  assert.deepEqual(view.sessions.map((s) => s.id), ['a', 'b', 'c']);
+
+  socketOptions.onMessage({
+    t: 'agent_state',
+    sid: 'b',
+    agent: 'codex',
+    agent_state: 'idle',
+    agent_state_since: '2026-01-01T00:00:01Z',
+    agent_state_signal: 'osc',
+  });
+  await new Promise(setImmediate);
+  view = render();
+  assert.equal(view.sessions.find((s) => s.id === 'b')?.agent_state, 'idle');
+  assert.equal(view.unread.has('b'), true, 'unread survives blocked resolution');
+  assert.deepEqual(view.sessions.map((s) => s.id), ['a', 'b', 'c']);
 });
 
 type Listener = {

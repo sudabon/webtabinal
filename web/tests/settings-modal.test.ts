@@ -7,13 +7,22 @@ import { createServer } from 'vite';
 
 import { DEFAULT_KEY_BINDINGS, type KeyBindings } from '../src/keymap.ts';
 import type { NotificationPermissionState } from '../src/notification-provider.ts';
-import type { NotificationConfig } from '../src/types.ts';
+import type { NotificationConfig, StateConfig } from '../src/types.ts';
 
 type StateSetter<T> = (next: T | ((current: T) => T)) => void;
 
 type TreeNode = {
   type?: unknown;
   props?: Record<string, unknown> & { children?: unknown };
+};
+
+const DEFAULT_STATE: StateConfig = {
+  enabled: true,
+  debounce_ms: 120,
+  quiescence_ms: 1500,
+  bottom_lines: 15,
+  notify_on_blocked: true,
+  manifest_dir: '',
 };
 
 class HookHarness {
@@ -135,6 +144,8 @@ async function loadComponents(t: { after: (fn: () => Promise<void> | void) => vo
       notification: NotificationConfig;
       notificationPermission: NotificationPermissionState;
       onNotificationChange: (patch: Partial<NotificationConfig>) => void | Promise<void>;
+      state: StateConfig;
+      onStateChange: (patch: Partial<StateConfig>) => void | Promise<void>;
       onNotificationPermissionRefresh: () => Promise<NotificationPermissionState>;
       onNotificationPermissionRequest: () => Promise<NotificationPermissionState>;
       onClose: () => void;
@@ -158,8 +169,10 @@ async function loadComponents(t: { after: (fn: () => Promise<void> | void) => vo
   const { NotificationsSettings } = await server.ssrLoadModule('/src/components/NotificationsSettings.tsx') as {
     NotificationsSettings: (props: {
       notification: NotificationConfig;
+      state: StateConfig;
       permissionState: NotificationPermissionState;
       onNotificationChange: (patch: Partial<NotificationConfig>) => void | Promise<void>;
+      onStateChange: (patch: Partial<StateConfig>) => void | Promise<void>;
       onPermissionRefresh: () => Promise<NotificationPermissionState>;
       onPermissionRequest: () => Promise<NotificationPermissionState>;
     }) => TreeNode;
@@ -189,6 +202,8 @@ test('settings modal opens on Appearance and can switch to General', async (t) =
     notification: { enabled: true, always: false, min_duration_ms: 0, sound: false },
     notificationPermission: 'default' as const,
     onNotificationChange: () => {},
+    state: DEFAULT_STATE,
+    onStateChange: () => {},
     onNotificationPermissionRefresh: async () => 'default' as const,
     onNotificationPermissionRequest: async () => 'granted' as const,
     onClose: () => {},
@@ -446,8 +461,10 @@ test('notification settings persist immediately and roll back with a visible err
     hooks.beginRender();
     return NotificationsSettings({
       notification: persisted,
+      state: DEFAULT_STATE,
       permissionState: 'granted',
       onNotificationChange,
+      onStateChange: () => {},
       onPermissionRefresh: async () => 'granted',
       onPermissionRequest: async () => 'granted',
     });
@@ -512,8 +529,10 @@ test('notification permission is requested directly and refreshed on open and wi
     hooks.beginRender();
     return NotificationsSettings({
       notification: { enabled: true, always: false, min_duration_ms: 0, sound: false },
+      state: DEFAULT_STATE,
       permissionState: 'default',
       onNotificationChange: () => {},
+      onStateChange: () => {},
       onPermissionRefresh: async () => {
         refreshes += 1;
         return externalPermission;
@@ -565,4 +584,76 @@ test('notification permission is requested directly and refreshed on open and wi
   assert.ok(walk(tree, (node) => node.props?.['data-notification-permission'] === 'unsupported'));
   assert.match(JSON.stringify(tree), /利用できません/);
   assert.equal(requests, 1, 'denied and unsupported states must not offer another request');
+});
+
+test('agent state settings persist, disable dependents, and roll back invalid numbers', async (t) => {
+  const hooks = new HookHarness();
+  const { NotificationsSettings } = await loadComponents(t, hooks);
+  let persistedState: StateConfig = { ...DEFAULT_STATE };
+  const persistedNotification: NotificationConfig = {
+    enabled: true,
+    always: true,
+    min_duration_ms: 0,
+    sound: false,
+  };
+  const statePatches: Array<Partial<StateConfig>> = [];
+  const render = () => {
+    hooks.beginRender();
+    return NotificationsSettings({
+      notification: persistedNotification,
+      state: persistedState,
+      permissionState: 'granted',
+      onNotificationChange: () => {
+        throw new Error('notification must not change');
+      },
+      onStateChange: (patch) => {
+        statePatches.push(patch);
+        if (typeof patch.debounce_ms === 'number' && patch.debounce_ms < 20) {
+          throw new Error('state.debounce_ms must be between 20 and 5000');
+        }
+        persistedState = { ...persistedState, ...patch };
+      },
+      onPermissionRefresh: async () => 'granted',
+      onPermissionRequest: async () => 'granted',
+    });
+  };
+
+  let tree = render();
+  assert.ok(walk(tree, (node) => node.type === 'input' && node.props?.id === 'state-enabled'));
+  const advanced = walk(tree, (node) => node.type === 'button' && String(node.props?.children).includes('詳細設定'));
+  assert.ok(advanced);
+  (advanced.props?.onClick as () => void)();
+  tree = render();
+  assert.ok(walk(tree, (node) => node.type === 'input' && node.props?.id === 'state-quiescence'));
+  assert.match(JSON.stringify(tree), /デーモン再起動後/);
+  assert.match(JSON.stringify(tree), /マニフェスト指定があれば/);
+
+  const enabled = walk(tree, (node) => node.type === 'input' && node.props?.id === 'state-enabled');
+  (enabled?.props?.onChange as (event: { target: { checked: boolean } }) => void)({ target: { checked: false } });
+  await new Promise(setImmediate);
+  tree = render();
+  assert.equal(walk(tree, (node) => node.type === 'input' && node.props?.id === 'state-notify-blocked')?.props?.disabled, true);
+  assert.equal(walk(tree, (node) => node.type === 'input' && node.props?.id === 'state-quiescence')?.props?.disabled, true);
+  assert.equal(walk(tree, (node) => node.type === 'input' && node.props?.id === 'state-quiescence')?.props?.value, 1500);
+
+  (walk(tree, (node) => node.type === 'input' && node.props?.id === 'state-enabled')?.props?.onChange as (event: { target: { checked: boolean } }) => void)({ target: { checked: true } });
+  await new Promise(setImmediate);
+  tree = render();
+  const quiescence = walk(tree, (node) => node.type === 'input' && node.props?.id === 'state-quiescence');
+  assert.equal(quiescence?.props?.disabled, false);
+  (quiescence?.props?.onChange as (event: { target: { value: string } }) => void)({ target: { value: '2000' } });
+  (quiescence?.props?.onBlur as (event: { target: { value: string } }) => void)({ target: { value: '2000' } });
+  await new Promise(setImmediate);
+  tree = render();
+  assert.equal(walk(tree, (node) => node.type === 'input' && node.props?.id === 'state-quiescence')?.props?.value, 2000);
+
+  const debounce = walk(tree, (node) => node.type === 'input' && node.props?.id === 'state-debounce');
+  (debounce?.props?.onChange as (event: { target: { value: string } }) => void)({ target: { value: '1' } });
+  (debounce?.props?.onBlur as (event: { target: { value: string } }) => void)({ target: { value: '1' } });
+  await new Promise(setImmediate);
+  tree = render();
+  assert.equal(walk(tree, (node) => node.type === 'input' && node.props?.id === 'state-debounce')?.props?.value, 120);
+  assert.equal(walk(tree, (node) => node.type === 'input' && node.props?.id === 'state-quiescence')?.props?.value, 2000);
+  assert.equal(walk(tree, (node) => node.props?.role === 'alert')?.props?.children, 'state.debounce_ms must be between 20 and 5000');
+  assert.deepEqual(persistedNotification, { enabled: true, always: true, min_duration_ms: 0, sound: false });
 });

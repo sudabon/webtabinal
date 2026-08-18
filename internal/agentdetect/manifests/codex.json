@@ -1,0 +1,39 @@
+{
+  "id": "codex",
+  "display_name": "Codex",
+  "schema_version": 1,
+  "match": {
+    "executables": ["codex"],
+    "command_patterns": ["(^|/)codex(\\s|$)"]
+  },
+  "screen": {
+    "bottom_lines": 15,
+    "buffer": "active",
+    "states": {
+      "blocked": [
+        {"id": "approval", "pattern": "Allow this command"},
+        {"id": "approval-want", "pattern": "Do you want to"},
+        {"id": "waiting-input", "pattern": "waiting for (your )?input"}
+      ],
+      "working": [
+        {"id": "interrupt", "pattern": "esc to interrupt"},
+        {"id": "thinking", "pattern": "(Thinking|Working)\\.\\.\\."},
+        {"id": "spinner", "pattern": "[⠁⠂⠄⡀⢀⠠⠐⠈]"}
+      ],
+      "idle": [
+        {"id": "prompt", "pattern": "^\\s*(›|>)\\s*$"}
+      ]
+    }
+  },
+  "authority": {
+    "blocked": ["screen"],
+    "working": ["screen", "activity"],
+    "idle": ["screen+quiescence", "osc"]
+  },
+  "osc_authoritative": true,
+  "quiescence_ms": 1500,
+  "activity_window_ms": 1000,
+  "activity_min_bytes": 32,
+  "verified_against": ["synthetic-codex-tui"],
+  "notes": "Patterns are calibrated from reviewed synthetic streams in tests/fixtures/agents/codex/synthetic-codex-tui."
+}

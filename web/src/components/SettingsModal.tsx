@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { NotificationPermissionState } from '../notification-provider';
-import type { ColorScheme, KeyBindings, NotificationConfig } from '../types';
+import type { ColorScheme, KeyBindings, NotificationConfig, StateConfig } from '../types';
 import { AppearanceSettings } from './AppearanceSettings';
 import { GeneralSettings } from './GeneralSettings';
 import { KeyboardSettings } from './KeyboardSettings';
@@ -26,6 +26,8 @@ type Props = {
   notification: NotificationConfig;
   notificationPermission: NotificationPermissionState;
   onNotificationChange: (patch: Partial<NotificationConfig>) => void | Promise<void>;
+  state: StateConfig;
+  onStateChange: (patch: Partial<StateConfig>) => void | Promise<void>;
   onNotificationPermissionRefresh: () => Promise<NotificationPermissionState>;
   onNotificationPermissionRequest: () => Promise<NotificationPermissionState>;
   onClose: () => void;
@@ -42,6 +44,8 @@ export function SettingsModal({
   notification,
   notificationPermission,
   onNotificationChange,
+  state,
+  onStateChange,
   onNotificationPermissionRefresh,
   onNotificationPermissionRequest,
   onClose,
@@ -110,8 +114,10 @@ export function SettingsModal({
           ) : category === 'notifications' ? (
             <NotificationsSettings
               notification={notification}
+              state={state}
               permissionState={notificationPermission}
               onNotificationChange={onNotificationChange}
+              onStateChange={onStateChange}
               onPermissionRefresh={onNotificationPermissionRefresh}
               onPermissionRequest={onNotificationPermissionRequest}
             />

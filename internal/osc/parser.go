@@ -27,6 +27,7 @@ type Event struct {
 	Title        string
 	Body         string
 	ColorIndexes []int
+	OSC          int
 }
 
 // Parser scans a byte stream for OSC sequences and returns events.
@@ -144,6 +145,10 @@ func parseOSC(payload string) (Event, bool) {
 		}
 		return Event{Kind: EventCmdStart, Command: string(decoded)}, true
 	}
+	// OSC 777 ; notify ; title ; body  (urxvt / iTerm-style desktop notification)
+	if strings.HasPrefix(payload, "777;") {
+		return parseOSC777(strings.TrimPrefix(payload, "777;"))
+	}
 	// OSC 99 ; [metadata;]payload  (Kitty desktop notification; check before OSC 9)
 	if strings.HasPrefix(payload, "99;") {
 		return parseOSC99(strings.TrimPrefix(payload, "99;"))
@@ -154,7 +159,7 @@ func parseOSC(payload string) (Event, bool) {
 		if strings.TrimSpace(body) == "" {
 			return Event{}, false
 		}
-		return Event{Kind: EventNotify, Body: body}, true
+		return Event{Kind: EventNotify, Body: body, OSC: 9}, true
 	}
 	return Event{}, false
 }
@@ -166,12 +171,36 @@ func parseOSC99(rest string) (Event, bool) {
 		metadata = ""
 	}
 	params := parseKittyParams(metadata)
-	ev := Event{Kind: EventNotify}
+	ev := Event{Kind: EventNotify, OSC: 99}
 	switch params["p"] {
 	case "title":
 		ev.Title = text
 	default:
 		ev.Body = text
+	}
+	if strings.TrimSpace(ev.Title) == "" && strings.TrimSpace(ev.Body) == "" {
+		return Event{}, false
+	}
+	return ev, true
+}
+
+func parseOSC777(rest string) (Event, bool) {
+	parts := strings.SplitN(rest, ";", 3)
+	if len(parts) > 0 && parts[0] == "notify" {
+		parts = parts[1:]
+	}
+	ev := Event{Kind: EventNotify, OSC: 777}
+	switch len(parts) {
+	case 0:
+		return Event{}, false
+	case 1:
+		ev.Body = parts[0]
+	case 2:
+		ev.Title = parts[0]
+		ev.Body = parts[1]
+	default:
+		ev.Title = parts[0]
+		ev.Body = strings.Join(parts[1:], ";")
 	}
 	if strings.TrimSpace(ev.Title) == "" && strings.TrimSpace(ev.Body) == "" {
 		return Event{}, false
