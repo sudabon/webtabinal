@@ -43,6 +43,25 @@ test('completion still respects min duration when provided', () => {
   );
 });
 
+test('always allows a focused active wait notification', () => {
+  assert.equal(
+    shouldRaiseDesktopNotification({ enabled: true, always: true, active: true, focused: true }),
+    true,
+  );
+});
+
+test('blocked wait events stay eligible without a duration threshold', () => {
+  assert.equal(
+    shouldRaiseDesktopNotification({
+      enabled: true,
+      always: false,
+      active: false,
+      focused: false,
+    }),
+    true,
+  );
+});
+
 test('disabled notifications skip wait alerts', () => {
   assert.equal(
     shouldRaiseDesktopNotification({ enabled: false, always: true, active: false, focused: false }),
@@ -60,4 +79,8 @@ test('agent wait content falls back to command then WebTabinal', () => {
     body: 'needs approval',
   });
   assert.equal(agentWaitContent('  ', '  '), null);
+  assert.deepEqual(agentWaitContent('Codex', 'Waiting for input'), {
+    title: 'Codex',
+    body: 'Waiting for input',
+  });
 });

@@ -112,9 +112,13 @@ make build
 
 ## 通知
 
-コマンド完了（タブが非アクティブ、またはウィンドウがフォーカスされていないとき）と、ターミナルが受け取った OSC 9 / OSC 99（エージェントの完了・承認待ちなど）で通知を出します。ネイティブ `.app` では macOS 通知、ブラウザでは Web Notification を使い、両方を同時に出すことはありません。待ち通知は `notification.min_duration_ms` の対象外です。
+コマンド完了（タブが非アクティブ、またはウィンドウがフォーカスされていないとき）、ターミナルが受け取った OSC 9 / OSC 99 / OSC 777（エージェントの完了・承認待ちなど）、および画面検知による `blocked` 遷移で通知を出します。ネイティブ `.app` では macOS 通知、ブラウザでは Web Notification を使い、両方を同時に出すことはありません。待ち通知と `blocked` 通知は `notification.min_duration_ms` の対象外です。
+
+同じセッションの OSC 待ち通知と画面検知 `blocked` は、4 秒の first-wins 窓で通知を 1 回にまとめます。状態 pill と `agent_state` フレームは抑制しません。ブラウザを閉じても daemon が残っているため、再接続時の `sessions` snapshot が現在の agent state の authoritative な復元元です。
 
 最初に WebTabinal の「設定 → 通知」を開き、「通知を有効にする」がオンであることを確認してください。「システム通知の許可が必要です」と表示されたら「通知を許可」をクリックします。「許可されていません」なら macOS の「システム設定 → 通知 → WebTabinal」、ブラウザ版ならサイト別の通知設定から許可してください。許可状態は「通知」画面を開いたときと、WebTabinal が再びフォーカスされたときに更新されます。
+
+エージェント状態の検出は既定でオンです。`blocked` 通知だけ止めたい場合は「blocked を通知する」をオフにします。状態検出自体をオフにすると pill は消え、既存の OSC 通知は残ります。
 
 ### Codex
 
@@ -175,7 +179,25 @@ notification_condition = "unfocused"
 
 ### Cursor Agent
 
-Cursor Agent `2026.08.11-e8db854` で `~/.cursor/cli-config.json` の `"notifications": true` を有効にし、応答完了までの TTY 出力を検証しました。このバージョンは OSC 0 によるタイトル更新のみを出力し、WebTabinal が通知として受け取る OSC 9 / OSC 99 / OSC 777 は出力しませんでした。そのため、このバージョンの組み込み通知は WebTabinal では非対応です。OSC 0 の終端に使われる BEL やプロセス状態は通知の根拠にしません（通常のターミナル操作による誤通知を避けるためです）。
+フィクスチャで検証した Cursor Agent は **`2026.08.11-e8db854`** です。「latest」の無条件保証はありません。
+
+| 状態 | このビルドでの扱い |
+|------|-------------------|
+| identity | 実行ファイル `agent` / `cursor-agent`、またはそのコマンドライン |
+| working | 画面出力の activity（quiet になるまで） |
+| idle | プロンプト、またはパターンに合わない静かな画面（unknown → idle） |
+| blocked | **未検証**。承認/質問画面の高確度 pattern はバンドルしていない |
+
+このビルドは OSC 0 によるタイトル更新（BEL 終端）のみを出し、WebTabinal が通知として扱う OSC 9 / 99 / 777 は出しません。`osc_authoritative` は false です。OSC 0 / BEL やプロセス存在だけでは `blocked` にしません。
+
+ローカルで文言が変わった場合は、`~/Library/Application Support/WebTabinal/manifests/cursor-agent.json` で上書きし、デーモンを再起動してください（`state.manifest_dir` の変更も再起動後）。失効の切り分けには読み取り専用の診断を使います。
+
+```bash
+./bin/webtabinal state snapshot <session-id>
+./bin/webtabinal state snapshot <session-id> --lines 20 --buffer active --json
+```
+
+デーモンが起動していない場合、このコマンドはデーモンを起動しません。fixture の再採取と manifest 更新は [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。
 
 ### OSC 9 単体プローブ
 
@@ -194,6 +216,11 @@ Cursor Agent `2026.08.11-e8db854` で `~/.cursor/cli-config.json` の `"notifica
 | 背景では出るが前面のアクティブタブでは出ない | アプリのフォーカス抑制 | WebTabinal の「操作中も通知する」をオンにする。Codex が元イベントを送るには `notification_condition = "always"` も必要 |
 | 許可状態が「許可されていません」 | macOS / ブラウザの許可 | macOS の「システム設定 → 通知 → WebTabinal」、またはブラウザのサイト設定で許可し、WebTabinal へフォーカスを戻す |
 | `.app` 更新後も旧挙動、または通知が重複する | 実行中の旧デーモン / 旧アプリ | [デスクトップアプリの更新](#デスクトップアプリの更新) の手順で古いデーモンを停止し、新しい `.app` から再起動する |
+| sidebar に状態 pill が出ない | 状態検出または未検出シェル | 「設定 → 通知」で状態検出がオンか確認する。通常のシェルは `none` のため pill を出さない |
+| Cursor の状態が idle のまま / 合わない | 画面再構築・identity・pattern のどれが失効したか | `webtabinal state snapshot <session-id>` で下端行、agent、manifest、match 行を確認する。daemon 未起動なら起動はしない |
+| `blocked` なのに通知がない | `notify_on_blocked` / フォーカス / 4 秒 dedupe | 「blocked を通知する」がオンか、前面抑制、直前の OSC 待ち通知との窓を確認する。Cursor の blocked はこのビルドでは未検証 |
+| 再接続後に pill が戻らない | 初期 snapshot | daemon が生きていれば `sessions` に `agent_state` が含まれる。daemon ごと落ちていれば状態は復元されない |
+| タブ順が勝手に変わる | 自動ソートはしない | `blocked` でも daemon の並びと Cmd+数字は変わらない |
 
 ## LaunchAgent（任意: ログイン時の常駐）
 
@@ -224,6 +251,12 @@ make build
 | `notification.always` | `false` |
 | `notification.min_duration_ms` | `0` |
 | `notification.sound` | `false`（v0.1 では未実装） |
+| `state.enabled` | `true` |
+| `state.debounce_ms` | `120`（20–5000） |
+| `state.quiescence_ms` | `1500`（0–60000。マニフェスト指定があれば優先） |
+| `state.bottom_lines` | `15`（1–200。マニフェスト指定があれば優先） |
+| `state.notify_on_blocked` | `true` |
+| `state.manifest_dir` | `""`（空なら `~/Library/Application Support/WebTabinal/manifests`。変更はデーモン再起動後） |
 | `confirm_close_running` | `true` |
 | `copy_on_select` | `false` |
 | `quit_when_no_tabs` | `true` |
@@ -255,4 +288,12 @@ UI を動かす目的で `go run ./cmd/webtabinal serve` や `go build` 単体�
 ```bash
 cd web
 npm run dev
+```
+
+通常のテストは fixture replay とデーモン/CLI の単体テストです。実エージェントを起動する検証は任意です。
+
+```bash
+go test -race ./...
+cd web && node --test --experimental-strip-types tests/*.test.ts
+make e2e-state AGENT=cursor-agent   # ローカルのみ。CI では実行しない
 ```

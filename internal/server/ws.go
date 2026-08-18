@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/sudabon/webtabinal/internal/agentdetect"
 	"github.com/sudabon/webtabinal/internal/config"
+	"github.com/sudabon/webtabinal/internal/notifyarbiter"
 	"github.com/sudabon/webtabinal/internal/osc"
 	"github.com/sudabon/webtabinal/internal/session"
 )
@@ -31,9 +33,11 @@ type Hub struct {
 	manager *session.Manager
 	cfg     *config.Store
 	logger  *log.Logger
+	arbiter *notifyarbiter.Arbiter
 
-	mu      sync.Mutex
-	clients map[*wsClient]struct{}
+	mu        sync.Mutex
+	clients   map[*wsClient]struct{}
+	lastAgent map[string]agentdetect.State
 }
 
 type wsClient struct {
@@ -46,14 +50,18 @@ type wsClient struct {
 	send         chan []byte
 	closeOnce    sync.Once
 	quit         chan struct{}
+	syncing      bool
+	deferred     [][]byte
 }
 
 func NewHub(manager *session.Manager, cfg *config.Store, logger *log.Logger) *Hub {
 	h := &Hub{
-		manager: manager,
-		cfg:     cfg,
-		logger:  logger,
-		clients: make(map[*wsClient]struct{}),
+		manager:   manager,
+		cfg:       cfg,
+		logger:    logger,
+		arbiter:   notifyarbiter.New(nil),
+		clients:   make(map[*wsClient]struct{}),
+		lastAgent: map[string]agentdetect.State{},
 	}
 	manager.SetHooks(
 		h.broadcastSessions,
@@ -61,7 +69,18 @@ func NewHub(manager *session.Manager, cfg *config.Store, logger *log.Logger) *Hu
 		h.broadcastStateFromEvent,
 		h.broadcastStateFromExit,
 	)
+	manager.SetOnDrop(func(id string) {
+		h.arbiter.Forget(id)
+		h.mu.Lock()
+		delete(h.lastAgent, id)
+		h.mu.Unlock()
+	})
+	manager.SubscribeAgent(h.onAgentSnapshot)
 	return h
+}
+
+func (h *Hub) SetArbiterClock(clock notifyarbiter.Clock) {
+	h.arbiter = notifyarbiter.New(clock)
 }
 
 func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
@@ -78,6 +97,7 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 		pendingBytes: map[string]int{},
 		send:         make(chan []byte, 256),
 		quit:         make(chan struct{}),
+		syncing:      true,
 	}
 	h.mu.Lock()
 	h.clients[c] = struct{}{}
@@ -92,11 +112,13 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 		return conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	})
 
-	// initial sync
-	h.send(c, map[string]any{"t": "sessions", "list": h.manager.List()})
-	for _, info := range h.manager.List() {
-		h.send(c, stateMsg(info))
+	// initial sync: enqueue snapshot before any deferred live transitions
+	list := h.manager.List()
+	h.sendNow(c, map[string]any{"t": "sessions", "list": list})
+	for _, info := range list {
+		h.sendNow(c, stateMsg(info))
 	}
+	h.finishClientSync(c)
 
 	defer h.disconnect(c)
 
@@ -260,12 +282,78 @@ func (h *Hub) broadcastNotify(s *session.Session, ev osc.Event) {
 	if strings.TrimSpace(ev.Title) == "" && strings.TrimSpace(ev.Body) == "" {
 		return
 	}
+	if !h.allowAttention(s.ID) {
+		return
+	}
 	payload := map[string]any{
 		"t":     "notify",
 		"sid":   s.ID,
 		"title": ev.Title,
 		"body":  ev.Body,
 	}
+	for _, c := range h.clientSnapshot() {
+		h.send(c, payload)
+	}
+}
+
+func (h *Hub) allowAttention(sessionID string) bool {
+	if h.arbiter == nil {
+		return true
+	}
+	return h.arbiter.Allow(sessionID)
+}
+
+func (h *Hub) onAgentSnapshot(snap agentdetect.Snapshot) {
+	h.mu.Lock()
+	prev := h.lastAgent[snap.SessionID]
+	h.lastAgent[snap.SessionID] = snap.State
+	h.mu.Unlock()
+	h.broadcastAgentState(snap)
+	if snap.State != agentdetect.StateBlocked || prev == agentdetect.StateBlocked {
+		return
+	}
+	if h.cfg == nil || !h.cfg.Get().State.NotifyOnBlocked {
+		return
+	}
+	if h.manager == nil {
+		return
+	}
+	s, ok := h.manager.Get(snap.SessionID)
+	if !ok {
+		return
+	}
+	if !h.allowAttention(snap.SessionID) {
+		return
+	}
+	title := h.agentDisplayName(snap.AgentID)
+	payload := map[string]any{
+		"t":      "notify",
+		"sid":    s.ID,
+		"title":  title,
+		"body":   "Waiting for input",
+		"kind":   "agent_blocked",
+		"source": "screen",
+	}
+	for _, c := range h.clientSnapshot() {
+		h.send(c, payload)
+	}
+}
+
+func (h *Hub) agentDisplayName(id string) string {
+	if id == "" {
+		return "Agent"
+	}
+	if h.manager == nil {
+		return id
+	}
+	if name := h.manager.AgentDisplayName(id); name != "" {
+		return name
+	}
+	return id
+}
+
+func (h *Hub) broadcastAgentState(snap agentdetect.Snapshot) {
+	payload := agentStateMsg(snap)
 	for _, c := range h.clientSnapshot() {
 		h.send(c, payload)
 	}
@@ -301,13 +389,51 @@ func (h *Hub) clientSnapshot() []*wsClient {
 }
 
 func (h *Hub) send(c *wsClient, v any) {
+	b, ok := h.marshal(v)
+	if !ok {
+		return
+	}
+	c.mu.Lock()
+	if c.syncing {
+		c.deferred = append(c.deferred, b)
+		c.mu.Unlock()
+		return
+	}
+	c.mu.Unlock()
+	h.enqueue(c, b)
+}
+
+func (h *Hub) sendNow(c *wsClient, v any) {
+	b, ok := h.marshal(v)
+	if !ok {
+		return
+	}
+	h.enqueue(c, b)
+}
+
+func (h *Hub) finishClientSync(c *wsClient) {
+	c.mu.Lock()
+	c.syncing = false
+	deferred := c.deferred
+	c.deferred = nil
+	c.mu.Unlock()
+	for _, b := range deferred {
+		h.enqueue(c, b)
+	}
+}
+
+func (h *Hub) marshal(v any) ([]byte, bool) {
 	b, err := json.Marshal(v)
 	if err != nil {
 		if h.logger != nil {
 			h.logger.Printf("ws marshal: %v", err)
 		}
-		return
+		return nil, false
 	}
+	return b, true
+}
+
+func (h *Hub) enqueue(c *wsClient, b []byte) {
 	select {
 	case <-c.quit:
 		return
@@ -354,6 +480,29 @@ func (h *Hub) disconnect(c *wsClient) {
 		delete(h.clients, c)
 		h.mu.Unlock()
 	})
+}
+
+func agentStateMsg(snap agentdetect.Snapshot) map[string]any {
+	since := ""
+	if !snap.Since.IsZero() {
+		since = snap.Since.UTC().Format(time.RFC3339)
+	}
+	state := snap.State
+	if state == "" {
+		state = agentdetect.StateNone
+	}
+	payload := map[string]any{
+		"t":                  "agent_state",
+		"sid":                snap.SessionID,
+		"agent":              snap.AgentID,
+		"agent_state":        state,
+		"agent_state_since":  since,
+		"agent_state_signal": snap.Signal,
+	}
+	if snap.Detail != "" {
+		payload["agent_state_detail"] = snap.Detail
+	}
+	return payload
 }
 
 func stateMsg(info session.Info) map[string]any {

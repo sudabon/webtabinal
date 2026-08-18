@@ -1,4 +1,4 @@
-.PHONY: build web daemon serve desktop desktop-test clean
+.PHONY: build web daemon serve desktop desktop-test clean e2e-state
 
 build: web daemon
 
@@ -26,3 +26,9 @@ clean:
 	rm -rf internal/static/dist
 	mkdir -p internal/static/dist
 	touch internal/static/dist/.gitkeep
+
+# Opt-in local agent E2E. Not part of build or CI. Does not download binaries
+# or rewrite agent configuration.
+e2e-state:
+	@if [ -z "$(AGENT)" ]; then echo "usage: make e2e-state AGENT=<claude|codex|cursor-agent>" >&2; exit 2; fi
+	bash scripts/e2e-state.sh "$(AGENT)"

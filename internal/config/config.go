@@ -22,6 +22,15 @@ type NotificationConfig struct {
 	Sound         bool `json:"sound"`
 }
 
+type StateConfig struct {
+	Enabled         bool   `json:"enabled"`
+	DebounceMs      int    `json:"debounce_ms"`
+	QuiescenceMs    int    `json:"quiescence_ms"`
+	BottomLines     int    `json:"bottom_lines"`
+	NotifyOnBlocked bool   `json:"notify_on_blocked"`
+	ManifestDir     string `json:"manifest_dir"`
+}
+
 type KeyBindingsConfig struct {
 	Enabled bool   `json:"enabled"`
 	Prefix  string `json:"prefix"`
@@ -46,6 +55,7 @@ type Config struct {
 	SidebarWidth        int                `json:"sidebar_width"`
 	ColorScheme         string             `json:"color_scheme"`
 	Notification        NotificationConfig `json:"notification"`
+	State               StateConfig        `json:"state"`
 	ConfirmCloseRunning bool               `json:"confirm_close_running"`
 	CopyOnSelect        bool               `json:"copy_on_select"`
 	QuitWhenNoTabs      bool               `json:"quit_when_no_tabs"`
@@ -69,6 +79,14 @@ func Defaults() Config {
 			Always:        false,
 			MinDurationMs: 0,
 			Sound:         false,
+		},
+		State: StateConfig{
+			Enabled:         true,
+			DebounceMs:      120,
+			QuiescenceMs:    1500,
+			BottomLines:     15,
+			NotifyOnBlocked: true,
+			ManifestDir:     "",
 		},
 		ConfirmCloseRunning: true,
 		CopyOnSelect:        false,
@@ -172,6 +190,12 @@ func (s *Store) applyDefaults() {
 	if s.cfg.KeyBindings.PrevTab == "" {
 		s.cfg.KeyBindings.PrevTab = d.KeyBindings.PrevTab
 	}
+	if s.cfg.State.DebounceMs == 0 {
+		s.cfg.State.DebounceMs = d.State.DebounceMs
+	}
+	if s.cfg.State.BottomLines == 0 {
+		s.cfg.State.BottomLines = d.State.BottomLines
+	}
 }
 
 func (s *Store) Get() Config {
@@ -260,6 +284,25 @@ func validate(cfg Config) error {
 	}
 	if err := validateKeyBindings(cfg.KeyBindings); err != nil {
 		return err
+	}
+	if err := validateState(cfg.State); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateState(s StateConfig) error {
+	if s.DebounceMs < 20 || s.DebounceMs > 5000 {
+		return fmt.Errorf("state.debounce_ms must be between 20 and 5000")
+	}
+	if s.QuiescenceMs < 0 || s.QuiescenceMs > 60000 {
+		return fmt.Errorf("state.quiescence_ms must be between 0 and 60000")
+	}
+	if s.BottomLines < 1 || s.BottomLines > 200 {
+		return fmt.Errorf("state.bottom_lines must be between 1 and 200")
+	}
+	if s.ManifestDir != "" && !filepath.IsAbs(s.ManifestDir) {
+		return fmt.Errorf("state.manifest_dir must be empty or an absolute path")
 	}
 	return nil
 }

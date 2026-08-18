@@ -19,7 +19,9 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/sudabon/webtabinal/internal/agentdetect"
 	"github.com/sudabon/webtabinal/internal/config"
+	"github.com/sudabon/webtabinal/internal/notifyarbiter"
 	"github.com/sudabon/webtabinal/internal/osc"
 	"github.com/sudabon/webtabinal/internal/session"
 )
@@ -482,6 +484,302 @@ func TestSecurityHeadersAreSet(t *testing.T) {
 	for name, want := range headers {
 		if got := rec.Header().Get(name); got != want {
 			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+}
+
+func recvJSON(t *testing.T, c *wsClient) map[string]any {
+	t.Helper()
+	select {
+	case raw := <-c.send:
+		var msg map[string]any
+		if err := json.Unmarshal(raw, &msg); err != nil {
+			t.Fatal(err)
+		}
+		return msg
+	default:
+		t.Fatal("expected WS frame")
+		return nil
+	}
+}
+
+func TestSessionListIncludesExplicitNoneAgentState(t *testing.T) {
+	store := testConfigStore(t)
+	mgr := session.NewManager(store, log.New(io.Discard, "", 0))
+	t.Cleanup(mgr.Close)
+	s, err := mgr.Create("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := mgr.SessionInfo(s)
+	if info.Agent != "" || info.AgentState != "none" {
+		t.Fatalf("ordinary shell agent snapshot = %+v", info)
+	}
+	if strings.Contains(info.AgentStateDetail, "\x1b") || strings.Contains(info.AgentStateDetail, "pattern=") && strings.Contains(info.AgentStateDetail, " ") {
+		t.Fatalf("diagnostic leaked screen text: %q", info.AgentStateDetail)
+	}
+}
+
+func TestBroadcastAgentStateDoesNotRequireAttach(t *testing.T) {
+	c := &wsClient{
+		attach: map[string]bool{},
+		send:   make(chan []byte, 2),
+		quit:   make(chan struct{}),
+	}
+	h := &Hub{clients: map[*wsClient]struct{}{c: {}}}
+	since := time.Unix(1_700_000_000, 0).UTC()
+	h.broadcastAgentState(agentdetect.Snapshot{
+		SessionID: "session",
+		AgentID:   "codex",
+		State:     agentdetect.StateBlocked,
+		Since:     since,
+		Signal:    agentdetect.SignalScreen,
+		Detail:    "pattern=ask line=0",
+	})
+	msg := recvJSON(t, c)
+	if msg["t"] != "agent_state" || msg["sid"] != "session" || msg["agent"] != "codex" || msg["agent_state"] != "blocked" {
+		t.Fatalf("agent_state frame = %#v", msg)
+	}
+	if msg["agent_state_since"] != since.Format(time.RFC3339) || msg["agent_state_signal"] != "screen" {
+		t.Fatalf("agent_state metadata = %#v", msg)
+	}
+	if msg["agent_state_detail"] != "pattern=ask line=0" {
+		t.Fatalf("detail = %#v", msg["agent_state_detail"])
+	}
+	if len(c.send) != 0 {
+		t.Fatal("unexpected extra WS frame")
+	}
+}
+
+func TestShellStateFrameUnchangedWhenAgentIdle(t *testing.T) {
+	c := &wsClient{send: make(chan []byte, 2), quit: make(chan struct{})}
+	h := &Hub{clients: map[*wsClient]struct{}{c: {}}}
+	info := session.Info{ID: "session", Cwd: "/tmp", Command: "codex", State: session.StateRunning, AgentState: "idle"}
+	h.broadcastState(info)
+	msg := recvJSON(t, c)
+	if msg["t"] != "state" || msg["state"] != "running" || msg["sid"] != "session" {
+		t.Fatalf("shell state frame = %#v", msg)
+	}
+	if _, ok := msg["agent_state"]; ok {
+		t.Fatalf("shell state frame unexpectedly includes agent_state: %#v", msg)
+	}
+}
+
+func TestInitialSessionsPrecedeDeferredAgentState(t *testing.T) {
+	c := &wsClient{
+		send:    make(chan []byte, 4),
+		quit:    make(chan struct{}),
+		syncing: true,
+	}
+	h := &Hub{clients: map[*wsClient]struct{}{c: {}}}
+	h.broadcastAgentState(agentdetect.Snapshot{
+		SessionID: "s1",
+		AgentID:   "codex",
+		State:     agentdetect.StateBlocked,
+		Since:     time.Unix(1_700_000_000, 0).UTC(),
+		Signal:    agentdetect.SignalScreen,
+	})
+	h.sendNow(c, map[string]any{"t": "sessions", "list": []any{}})
+	h.finishClientSync(c)
+
+	first := recvJSON(t, c)
+	if first["t"] != "sessions" {
+		t.Fatalf("first frame = %#v, want sessions", first)
+	}
+	second := recvJSON(t, c)
+	if second["t"] != "agent_state" || second["agent_state"] != "blocked" {
+		t.Fatalf("second frame = %#v, want deferred agent_state", second)
+	}
+}
+
+func TestAttentionDedupeOSCThenScreen(t *testing.T) {
+	clock := agentdetect.NewManualClock(time.Unix(1_700_000_000, 0))
+	c := &wsClient{send: make(chan []byte, 8), quit: make(chan struct{})}
+	store := testConfigStore(t)
+	s := &session.Session{ID: "session", State: session.StateRunning, Command: "codex"}
+	mgr := session.NewManager(store, log.New(io.Discard, "", 0))
+	t.Cleanup(mgr.Close)
+	h := &Hub{
+		manager:   mgr,
+		cfg:       store,
+		clients:   map[*wsClient]struct{}{c: {}},
+		arbiter:   notifyarbiter.New(clock),
+		lastAgent: map[string]agentdetect.State{"session": agentdetect.StateWorking},
+	}
+	mgr.SetEngine(agentdetect.New(agentdetect.Options{
+		Registry: agentdetect.Load(agentdetect.LoadOptions{DisableLocal: true}),
+		Clock:    clock,
+	}))
+	// Install the live session id into the manager via Create so Get() works.
+	live, err := mgr.Create("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.ID = live.ID
+	h.lastAgent[live.ID] = agentdetect.StateWorking
+	drainClient(c)
+
+	h.broadcastNotify(s, osc.Event{Kind: osc.EventNotify, Title: "Codex", Body: "needs approval"})
+	oscMsg := recvJSON(t, c)
+	if oscMsg["t"] != "notify" || oscMsg["kind"] != nil {
+		t.Fatalf("OSC notify = %#v", oscMsg)
+	}
+
+	clock.Advance(2 * time.Second)
+	h.onAgentSnapshot(agentdetect.Snapshot{
+		SessionID: live.ID,
+		AgentID:   agentdetect.IDCodex,
+		State:     agentdetect.StateBlocked,
+		Since:     clock.Now(),
+		Signal:    agentdetect.SignalScreen,
+	})
+	stateMsg := recvJSON(t, c)
+	if stateMsg["t"] != "agent_state" || stateMsg["agent_state"] != "blocked" {
+		t.Fatalf("blocked transition = %#v", stateMsg)
+	}
+	if len(c.send) != 0 {
+		t.Fatalf("screen notify should be suppressed, extra %#v", recvJSON(t, c))
+	}
+}
+
+func TestAttentionDedupeScreenThenOSC(t *testing.T) {
+	clock := agentdetect.NewManualClock(time.Unix(1_700_000_000, 0))
+	c := &wsClient{send: make(chan []byte, 8), quit: make(chan struct{})}
+	store := testConfigStore(t)
+	mgr := session.NewManager(store, log.New(io.Discard, "", 0))
+	t.Cleanup(mgr.Close)
+	live, err := mgr.Create("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &Hub{
+		manager:   mgr,
+		cfg:       store,
+		clients:   map[*wsClient]struct{}{c: {}},
+		arbiter:   notifyarbiter.New(clock),
+		lastAgent: map[string]agentdetect.State{live.ID: agentdetect.StateWorking},
+	}
+	drainClient(c)
+
+	h.onAgentSnapshot(agentdetect.Snapshot{
+		SessionID: live.ID,
+		AgentID:   agentdetect.IDCodex,
+		State:     agentdetect.StateBlocked,
+		Since:     clock.Now(),
+		Signal:    agentdetect.SignalScreen,
+	})
+	var sawNotify, sawState bool
+	for len(c.send) > 0 {
+		msg := recvJSON(t, c)
+		switch msg["t"] {
+		case "notify":
+			sawNotify = true
+			if msg["kind"] != "agent_blocked" || msg["source"] != "screen" {
+				t.Fatalf("blocked notify = %#v", msg)
+			}
+		case "agent_state":
+			sawState = true
+		}
+	}
+	if !sawNotify || !sawState {
+		t.Fatal("expected blocked notify and agent_state")
+	}
+
+	clock.Advance(time.Second)
+	h.broadcastNotify(live, osc.Event{Kind: osc.EventNotify, Title: "Codex", Body: "needs approval"})
+	if len(c.send) != 0 {
+		t.Fatalf("OSC notify should be suppressed, extra %#v", recvJSON(t, c))
+	}
+}
+
+func TestAttentionDedupeIndependentSessionsAndLaterWindow(t *testing.T) {
+	clock := agentdetect.NewManualClock(time.Unix(1_700_000_000, 0))
+	c := &wsClient{send: make(chan []byte, 8), quit: make(chan struct{})}
+	h := &Hub{clients: map[*wsClient]struct{}{c: {}}, arbiter: notifyarbiter.New(clock)}
+	h.broadcastNotify(&session.Session{ID: "a"}, osc.Event{Kind: osc.EventNotify, Title: "A", Body: "one"})
+	h.broadcastNotify(&session.Session{ID: "b"}, osc.Event{Kind: osc.EventNotify, Title: "B", Body: "two"})
+	if recvJSON(t, c)["sid"] != "a" || recvJSON(t, c)["sid"] != "b" {
+		t.Fatal("both sessions should notify")
+	}
+	clock.Advance(notifyarbiter.Window)
+	h.broadcastNotify(&session.Session{ID: "a"}, osc.Event{Kind: osc.EventNotify, Title: "A", Body: "again"})
+	if recvJSON(t, c)["body"] != "again" {
+		t.Fatal("post-window event should notify")
+	}
+}
+
+func TestRepeatedBlockedDoesNotNotifyAgain(t *testing.T) {
+	clock := agentdetect.NewManualClock(time.Unix(1_700_000_000, 0))
+	c := &wsClient{send: make(chan []byte, 8), quit: make(chan struct{})}
+	store := testConfigStore(t)
+	mgr := session.NewManager(store, log.New(io.Discard, "", 0))
+	t.Cleanup(mgr.Close)
+	live, err := mgr.Create("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &Hub{
+		manager:   mgr,
+		cfg:       store,
+		clients:   map[*wsClient]struct{}{c: {}},
+		arbiter:   notifyarbiter.New(clock),
+		lastAgent: map[string]agentdetect.State{live.ID: agentdetect.StateWorking},
+	}
+	drainClient(c)
+	snap := agentdetect.Snapshot{SessionID: live.ID, AgentID: agentdetect.IDCodex, State: agentdetect.StateBlocked, Since: clock.Now(), Signal: agentdetect.SignalScreen}
+	h.onAgentSnapshot(snap)
+	drainClient(c)
+	clock.Advance(notifyarbiter.Window)
+	h.onAgentSnapshot(snap)
+	for len(c.send) > 0 {
+		msg := recvJSON(t, c)
+		if msg["t"] == "notify" {
+			t.Fatalf("repeated blocked evidence notified: %#v", msg)
+		}
+	}
+}
+
+func TestNotifyOnBlockedFalseSkipsScreenNotify(t *testing.T) {
+	c := &wsClient{send: make(chan []byte, 8), quit: make(chan struct{})}
+	store := testConfigStore(t)
+	if _, err := store.Patch(map[string]any{"state": map[string]any{"notify_on_blocked": false}}); err != nil {
+		t.Fatal(err)
+	}
+	mgr := session.NewManager(store, log.New(io.Discard, "", 0))
+	t.Cleanup(mgr.Close)
+	live, err := mgr.Create("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &Hub{
+		manager:   mgr,
+		cfg:       store,
+		clients:   map[*wsClient]struct{}{c: {}},
+		lastAgent: map[string]agentdetect.State{live.ID: agentdetect.StateWorking},
+	}
+	drainClient(c)
+	h.onAgentSnapshot(agentdetect.Snapshot{SessionID: live.ID, AgentID: agentdetect.IDCodex, State: agentdetect.StateBlocked, Signal: agentdetect.SignalScreen, Since: time.Now()})
+	sawState := false
+	for len(c.send) > 0 {
+		msg := recvJSON(t, c)
+		if msg["t"] == "notify" {
+			t.Fatalf("screen notify emitted while disabled: %#v", msg)
+		}
+		if msg["t"] == "agent_state" {
+			sawState = true
+		}
+	}
+	if !sawState {
+		t.Fatal("pill/state transport should still update")
+	}
+}
+
+func drainClient(c *wsClient) {
+	for {
+		select {
+		case <-c.send:
+		default:
+			return
 		}
 	}
 }

@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -16,9 +17,11 @@ import (
 
 	"github.com/creack/pty"
 	"github.com/google/uuid"
+	"github.com/sudabon/webtabinal/internal/agentdetect"
 	"github.com/sudabon/webtabinal/internal/integration"
 	"github.com/sudabon/webtabinal/internal/osc"
 	"github.com/sudabon/webtabinal/internal/paths"
+	"github.com/sudabon/webtabinal/internal/vtscreen"
 )
 
 type State string
@@ -55,21 +58,27 @@ type Session struct {
 	logger   *log.Logger
 	done     chan struct{}
 	closed   bool
+	screen   vtscreen.Screen
 
 	colorQueries map[int]int
 	palette      osc.Palette
 }
 
 type Info struct {
-	ID         string `json:"id"`
-	Order      int    `json:"order"`
-	Cwd        string `json:"cwd"`
-	Command    string `json:"command"`
-	State      State  `json:"state"`
-	ExitCode   *int   `json:"exit"`
-	Integrated bool   `json:"integrated"`
-	Memo       string `json:"memo"`
-	RunMs      int64  `json:"run_ms,omitempty"`
+	ID               string `json:"id"`
+	Order            int    `json:"order"`
+	Cwd              string `json:"cwd"`
+	Command          string `json:"command"`
+	State            State  `json:"state"`
+	ExitCode         *int   `json:"exit"`
+	Integrated       bool   `json:"integrated"`
+	Memo             string `json:"memo"`
+	RunMs            int64  `json:"run_ms,omitempty"`
+	Agent            string `json:"agent"`
+	AgentState       string `json:"agent_state"`
+	AgentStateSince  string `json:"agent_state_since"`
+	AgentStateSignal string `json:"agent_state_signal"`
+	AgentStateDetail string `json:"agent_state_detail,omitempty"`
 }
 
 const MaxMemoRunes = 30
@@ -87,6 +96,7 @@ func (s *Session) Info() Info {
 		Integrated: s.Integrated,
 		Memo:       s.Memo,
 		RunMs:      s.LastRunMs,
+		AgentState: string(agentdetect.StateNone),
 	}
 	if s.State == StateRunning && !s.RunStarted.IsZero() {
 		info.RunMs = time.Since(s.RunStarted).Milliseconds()
@@ -117,6 +127,7 @@ type CreateOpts struct {
 	OnOutput        func(*Session, []byte)
 	Logger          *log.Logger
 	Palette         osc.Palette
+	ScreenFactory   vtscreen.Factory
 }
 
 func Create(opts CreateOpts) (*Session, error) {
@@ -184,11 +195,33 @@ func Create(opts CreateOpts) (*Session, error) {
 		logger:   opts.Logger,
 		done:     make(chan struct{}),
 		palette:  opts.Palette,
+		screen:   openScreen(opts.ScreenFactory, int(opts.Cols), int(opts.Rows), opts.Logger, id),
 	}
 
 	go s.readLoop()
 	go s.waitLoop()
 	return s, nil
+}
+
+func openScreen(factory vtscreen.Factory, cols, rows int, logger *log.Logger, id string) vtscreen.Screen {
+	defer func() {
+		if rec := recover(); rec != nil && logger != nil {
+			logger.Printf("session %s screen model: panic: %v", id, rec)
+		}
+	}()
+	if factory == nil {
+		factory = func(c, r int) (vtscreen.Screen, error) {
+			return vtscreen.Open(vtscreen.Options{Cols: c, Rows: r, Logger: logger, Name: id})
+		}
+	}
+	scr, err := factory(cols, rows)
+	if err != nil {
+		if logger != nil {
+			logger.Printf("session %s screen model: %v", id, err)
+		}
+		return nil
+	}
+	return scr
 }
 
 func shellArgs(shell string) []string {
@@ -211,6 +244,7 @@ func (s *Session) readLoop() {
 			s.Ring.Write(chunk)
 			events := s.parser.Feed(chunk)
 			s.handleEvents(events)
+			s.feedScreen(chunk)
 			if s.onOutput != nil {
 				s.onOutput(s, chunk)
 			}
@@ -367,14 +401,52 @@ func (s *Session) consumeColorQuery(code int) bool {
 	return true
 }
 
+func (s *Session) feedScreen(chunk []byte) {
+	s.mu.Lock()
+	scr := s.screen
+	s.mu.Unlock()
+	if scr == nil {
+		return
+	}
+	_ = scr.Feed(bytes.Clone(chunk))
+}
+
+func (s *Session) ScreenSnapshot(opts vtscreen.SnapshotOptions) vtscreen.Snapshot {
+	s.mu.Lock()
+	scr := s.screen
+	s.mu.Unlock()
+	if scr == nil {
+		return vtscreen.Snapshot{Available: false}
+	}
+	return scr.Snapshot(opts)
+}
+
+// MarkScreenUnavailable closes the VT model so diagnostics return a structured 409.
+func (s *Session) MarkScreenUnavailable() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.screen != nil {
+		_ = s.screen.Close()
+		s.screen = nil
+	}
+}
+
 func (s *Session) Resize(cols, rows uint16) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.Cols, s.Rows = cols, rows
-	if s.pty == nil {
-		return nil
+	if s.closed {
+		return io.ErrClosedPipe
 	}
-	return pty.Setsize(s.pty, &pty.Winsize{Cols: cols, Rows: rows})
+	if s.pty != nil {
+		if err := pty.Setsize(s.pty, &pty.Winsize{Cols: cols, Rows: rows}); err != nil {
+			return err
+		}
+	}
+	s.Cols, s.Rows = cols, rows
+	if s.screen != nil {
+		_ = s.screen.Resize(int(cols), int(rows))
+	}
+	return nil
 }
 
 func (s *Session) SetFallbackState(running bool, cmdName string) {
@@ -408,7 +480,12 @@ func (s *Session) Close() error {
 	s.closed = true
 	cmd := s.cmd
 	ptmx := s.pty
+	scr := s.screen
 	s.mu.Unlock()
+
+	if scr != nil {
+		_ = scr.Close()
+	}
 
 	if cmd != nil && cmd.Process != nil {
 		_ = cmd.Process.Signal(syscall.SIGHUP)

@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -12,8 +13,15 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/sudabon/webtabinal/internal/agentdetect"
 	"github.com/sudabon/webtabinal/internal/config"
 	"github.com/sudabon/webtabinal/internal/osc"
+	"github.com/sudabon/webtabinal/internal/vtscreen"
+)
+
+var (
+	ErrNotFound          = errors.New("session not found")
+	ErrScreenUnavailable = errors.New("screen model is unavailable")
 )
 
 type Manager struct {
@@ -26,7 +34,9 @@ type Manager struct {
 	onOutput func(*Session, []byte)
 	onEvent  func(*Session, osc.Event)
 	onExit   func(*Session)
+	onDrop   func(string)
 	stopFB   chan struct{}
+	engine   *agentdetect.Engine
 }
 
 func NewManager(cfg *config.Store, logger *log.Logger) *Manager {
@@ -35,6 +45,7 @@ func NewManager(cfg *config.Store, logger *log.Logger) *Manager {
 		cfg:      cfg,
 		logger:   logger,
 		stopFB:   make(chan struct{}),
+		engine:   newAgentEngine(cfg, logger),
 	}
 	go m.fallbackLoop()
 	return m
@@ -49,6 +60,12 @@ func (m *Manager) SetHooks(onChange func(), onOutput func(*Session, []byte), onE
 	m.onExit = onExit
 }
 
+func (m *Manager) SetOnDrop(fn func(string)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onDrop = fn
+}
+
 func (m *Manager) hooks() (func(), func(*Session, []byte), func(*Session, osc.Event), func(*Session)) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -58,8 +75,16 @@ func (m *Manager) hooks() (func(), func(*Session, []byte), func(*Session, osc.Ev
 func (m *Manager) Close() {
 	close(m.stopFB)
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	list := make([]*Session, 0, len(m.sessions))
 	for _, s := range m.sessions {
+		list = append(list, s)
+	}
+	eng := m.engine
+	m.mu.Unlock()
+	for _, s := range list {
+		if eng != nil {
+			eng.Close(s.ID)
+		}
 		_ = s.Close()
 	}
 }
@@ -70,10 +95,40 @@ func (m *Manager) List() []Info {
 	out := make([]Info, 0, len(m.order))
 	for _, id := range m.order {
 		if s, ok := m.sessions[id]; ok {
-			out = append(out, s.Info())
+			out = append(out, m.enrich(s.Info()))
 		}
 	}
 	return out
+}
+
+// SessionInfo returns the public snapshot including agent state.
+func (m *Manager) SessionInfo(s *Session) Info {
+	if s == nil {
+		return Info{AgentState: string(agentdetect.StateNone)}
+	}
+	return m.enrich(s.Info())
+}
+
+func (m *Manager) enrich(info Info) Info {
+	info.AgentState = string(agentdetect.StateNone)
+	info.Agent = ""
+	info.AgentStateSignal = ""
+	info.AgentStateDetail = ""
+	info.AgentStateSince = ""
+	snap, ok := m.AgentSnapshot(info.ID)
+	if !ok {
+		return info
+	}
+	info.Agent = snap.AgentID
+	if snap.State != "" {
+		info.AgentState = string(snap.State)
+	}
+	if !snap.Since.IsZero() {
+		info.AgentStateSince = snap.Since.UTC().Format(time.RFC3339)
+	}
+	info.AgentStateSignal = string(snap.Signal)
+	info.AgentStateDetail = snap.Detail
+	return info
 }
 
 func (m *Manager) Get(id string) (*Session, bool) {
@@ -81,6 +136,28 @@ func (m *Manager) Get(id string) (*Session, bool) {
 	defer m.mu.RUnlock()
 	s, ok := m.sessions[id]
 	return s, ok
+}
+
+// StateSnapshot returns a read-only diagnostic of the visible buffer and agent matches.
+// It does not write to the PTY or change detector state.
+func (m *Manager) StateSnapshot(id string, lines int, buffer vtscreen.BufferKind) (agentdetect.Diagnostic, error) {
+	s, ok := m.Get(id)
+	if !ok {
+		return agentdetect.Diagnostic{}, ErrNotFound
+	}
+	screen := s.ScreenSnapshot(vtscreen.SnapshotOptions{Buffer: buffer, Lines: lines})
+	if !screen.Available {
+		return agentdetect.Diagnostic{}, ErrScreenUnavailable
+	}
+	eng := m.currentEngine()
+	var agent agentdetect.Snapshot
+	detectorOK := false
+	var reg *agentdetect.Registry
+	if eng != nil {
+		reg = eng.Registry()
+		agent, detectorOK = eng.Snapshot(id)
+	}
+	return agentdetect.BuildDiagnostic(id, screen, agent, detectorOK, reg), nil
 }
 
 func (m *Manager) Create(cwd string) (*Session, error) {
@@ -99,6 +176,7 @@ func (m *Manager) Create(cwd string) (*Session, error) {
 		Palette:         osc.PaletteFor(cfg.ResolvedTheme()),
 		Logger:          m.logger,
 		OnEvent: func(sess *Session, ev osc.Event) {
+			m.observeEvent(sess, ev)
 			_, _, onEvent, _ := m.hooks()
 			if onEvent != nil {
 				onEvent(sess, ev)
@@ -108,6 +186,7 @@ func (m *Manager) Create(cwd string) (*Session, error) {
 			m.handleExit(sess)
 		},
 		OnOutput: func(sess *Session, data []byte) {
+			m.observeOutput(sess, len(data))
 			_, onOutput, _, _ := m.hooks()
 			if onOutput != nil {
 				onOutput(sess, data)
@@ -117,6 +196,8 @@ func (m *Manager) Create(cwd string) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	m.openDetector(s)
 
 	m.mu.Lock()
 	m.sessions[s.ID] = s
@@ -158,6 +239,7 @@ func (m *Manager) Restart(id string) (*Session, error) {
 	}
 	// Memo was already validated when stored on the old session.
 	_ = ns.SetMemo(memo)
+	m.dropDetector(id)
 	_ = s.Close()
 
 	m.mu.Lock()
@@ -220,6 +302,7 @@ func (m *Manager) Delete(id string) error {
 		return fmt.Errorf("session not found")
 	}
 	_ = s.Close()
+	m.dropDetector(id)
 	m.mu.Lock()
 	delete(m.sessions, id)
 	for i, oid := range m.order {
@@ -282,6 +365,7 @@ func (m *Manager) handleExit(s *Session) {
 		_ = m.Delete(s.ID)
 		return
 	}
+	m.dropDetector(s.ID)
 	onChange, _, _, onExit := m.hooks()
 	if onExit != nil {
 		onExit(s)
@@ -316,6 +400,9 @@ func (m *Manager) pollFallback() {
 	changed := false
 	for _, s := range list {
 		info := s.Info()
+		if info.State != StateExited {
+			m.observeForeground(s)
+		}
 		if info.Integrated || info.State == StateExited {
 			continue
 		}

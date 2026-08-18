@@ -312,3 +312,139 @@ func TestPatchKeyBindingsAcceptsValidChord(t *testing.T) {
 		t.Fatalf("patched key_bindings = %+v", got.KeyBindings)
 	}
 }
+
+func TestStateConfigDefaults(t *testing.T) {
+	got := Defaults().State
+	if !got.Enabled || got.DebounceMs != 120 || got.QuiescenceMs != 1500 || got.BottomLines != 15 || !got.NotifyOnBlocked || got.ManifestDir != "" {
+		t.Fatalf("Defaults().State = %+v", got)
+	}
+
+	store := newTestStore(t)
+	stored := store.Public().State
+	if stored != got {
+		t.Fatalf("first-launch state = %+v, want %+v", stored, got)
+	}
+}
+
+func TestOlderConfigGainsAgentStateDefaults(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	support := filepath.Join(home, "Library", "Application Support", "WebTabinal")
+	if err := os.MkdirAll(support, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(support, "config.json"), []byte(`{"port":8642,"font_size":16,"notification":{"enabled":false,"always":true,"min_duration_ms":4000,"sound":true}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := LoadOrCreate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := store.Public()
+	if got.FontSize != 16 {
+		t.Fatalf("font_size = %d, want 16", got.FontSize)
+	}
+	if got.Notification.Enabled || !got.Notification.Always || got.Notification.MinDurationMs != 4000 || !got.Notification.Sound {
+		t.Fatalf("unrelated notification changed: %+v", got.Notification)
+	}
+	d := Defaults().State
+	if got.State != d {
+		t.Fatalf("migrated state = %+v, want %+v", got.State, d)
+	}
+}
+
+func TestOlderConfigPreservesExplicitStateFalseAndZero(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	support := filepath.Join(home, "Library", "Application Support", "WebTabinal")
+	if err := os.MkdirAll(support, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"state":{"enabled":false,"notify_on_blocked":false,"quiescence_ms":0}}`
+	if err := os.WriteFile(filepath.Join(support, "config.json"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := LoadOrCreate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := store.Public().State
+	if got.Enabled || got.NotifyOnBlocked {
+		t.Fatalf("explicit false not preserved: %+v", got)
+	}
+	if got.QuiescenceMs != 0 {
+		t.Fatalf("explicit zero quiescence = %d, want 0", got.QuiescenceMs)
+	}
+	if got.DebounceMs != 120 || got.BottomLines != 15 {
+		t.Fatalf("missing timing defaults not filled: %+v", got)
+	}
+}
+
+func TestPatchRejectsInvalidState(t *testing.T) {
+	store := newTestStore(t)
+	before := store.Public()
+
+	tests := []struct {
+		name  string
+		patch map[string]any
+	}{
+		{name: "debounce low", patch: map[string]any{"debounce_ms": 19}},
+		{name: "debounce high", patch: map[string]any{"debounce_ms": 5001}},
+		{name: "quiescence negative", patch: map[string]any{"quiescence_ms": -1}},
+		{name: "quiescence high", patch: map[string]any{"quiescence_ms": 60001}},
+		{name: "bottom lines low", patch: map[string]any{"bottom_lines": 0}},
+		{name: "bottom lines high", patch: map[string]any{"bottom_lines": 201}},
+		{name: "relative manifest dir", patch: map[string]any{"manifest_dir": "manifests"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := map[string]any{
+				"enabled":           true,
+				"debounce_ms":       120,
+				"quiescence_ms":     1500,
+				"bottom_lines":      15,
+				"notify_on_blocked": true,
+				"manifest_dir":      "",
+			}
+			for k, v := range tt.patch {
+				body[k] = v
+			}
+			if _, err := store.Patch(map[string]any{"state": body}); err == nil {
+				t.Fatal("Patch returned nil error")
+			}
+			if got := store.Public(); got != before {
+				t.Fatalf("stored config changed after rejection: %+v", got)
+			}
+		})
+	}
+}
+
+func TestPatchStatePreservesUnspecifiedFields(t *testing.T) {
+	store := newTestStore(t)
+	abs := t.TempDir()
+	if _, err := store.Patch(map[string]any{
+		"state": map[string]any{
+			"enabled":           true,
+			"debounce_ms":       200,
+			"quiescence_ms":     0,
+			"bottom_lines":      20,
+			"notify_on_blocked": false,
+			"manifest_dir":      abs,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := store.Patch(map[string]any{"state": map[string]any{"enabled": false}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State.Enabled {
+		t.Fatal("state.enabled = true, want false")
+	}
+	if got.State.DebounceMs != 200 || got.State.QuiescenceMs != 0 || got.State.BottomLines != 20 || got.State.NotifyOnBlocked || got.State.ManifestDir != abs {
+		t.Fatalf("unspecified state fields changed: %+v", got.State)
+	}
+}

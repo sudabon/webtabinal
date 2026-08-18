@@ -32,6 +32,17 @@ func main() {
 			fmt.Fprintf(os.Stderr, "serve error: %v\n", err)
 			os.Exit(1)
 		}
+	case "state":
+		opts, err := parseStateArgs(os.Args[2:])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(2)
+		}
+		cfg, err := config.LoadOrCreate()
+		if err != nil {
+			fatal(err)
+		}
+		os.Exit(runStateSnapshot(os.Stdout, os.Stderr, cfg, nil, opts))
 	case "install":
 		bin, err := os.Executable()
 		if err != nil {
@@ -121,7 +132,8 @@ func runServe() error {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "usage: %s <serve|install|uninstall|status|open>\n", paths.CLIName)
+	fmt.Fprintf(os.Stderr, "usage: %s <serve|install|uninstall|status|open|state>\n", paths.CLIName)
+	fmt.Fprintf(os.Stderr, "       %s state snapshot <session-id> [--lines N] [--buffer active|primary|alternate] [--json]\n", paths.CLIName)
 }
 
 func fatal(err error) {
