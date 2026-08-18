@@ -35,6 +35,30 @@ func TestAdapterConformance(t *testing.T) {
 	runConformance(t, New, nil)
 }
 
+func TestFeedTerminalQueriesDoNotBlock(t *testing.T) {
+	s, err := New(80, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	// TUI apps (claude, cursor-agent) send DA1/DSR on startup. x/vt writes
+	// replies to an io.Pipe; without a reader Feed would block forever.
+	queries := []byte("\x1b[c\x1b[>c\x1b[6n\x1b[?6n")
+	done := make(chan error, 1)
+	go func() {
+		done <- s.Feed(queries)
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Feed queries: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Feed blocked on terminal query replies")
+	}
+}
+
 func TestAdapterContractGeometryAndLifecycle(t *testing.T) {
 	s, err := New(120, 40)
 	if err != nil {
