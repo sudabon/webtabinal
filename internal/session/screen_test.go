@@ -289,6 +289,48 @@ func TestCloseMakesScreenUnavailable(t *testing.T) {
 	}
 }
 
+func TestReadLoopDoesNotStallOnTerminalQueries(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scr, err := vtscreen.New(80, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = scr.Close() })
+	want := []byte("\x1b[c\x1b[6nhello")
+	var outputs []byte
+	s := &Session{
+		pty:    reader,
+		Ring:   NewRingBuffer(1024),
+		screen: scr,
+		onOutput: func(_ *Session, data []byte) {
+			outputs = append(outputs, data...)
+		},
+	}
+	go func() {
+		_, _ = writer.Write(want)
+		_ = writer.Close()
+	}()
+	done := make(chan struct{})
+	go func() {
+		s.readLoop()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("readLoop stalled on DA1/DSR; output %q", outputs)
+	}
+	if !bytes.Equal(s.Ring.Bytes(), want) {
+		t.Fatalf("ring = %q, want %q", s.Ring.Bytes(), want)
+	}
+	if !bytes.Equal(outputs, want) {
+		t.Fatalf("onOutput = %q, want %q", outputs, want)
+	}
+}
+
 func TestScreenFeedFailureDoesNotStopForwarding(t *testing.T) {
 	reader, writer, err := os.Pipe()
 	if err != nil {

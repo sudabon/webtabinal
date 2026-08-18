@@ -2,6 +2,7 @@ package vtscreen
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"strings"
 	"sync"
@@ -39,6 +40,10 @@ func Open(opts Options) (screen Screen, err error) {
 	}()
 	emu := xvt.NewEmulator(opts.Cols, opts.Rows)
 	emu.SetScrollbackSize(1)
+	// x/vt answers DA1/DSR/DECRQM by writing to an unbuffered io.Pipe.
+	// Nobody reads that pipe for snapshots, so drain replies or Feed blocks
+	// the PTY read loop and TUI apps (claude, agent) hang on startup.
+	go drainEmulatorReplies(emu)
 	s := &emulatorScreen{
 		emu:             emu,
 		cols:            opts.Cols,
@@ -80,6 +85,10 @@ type emulatorScreen struct {
 	name            string
 	failLogInterval time.Duration
 	lastFailLog     time.Time
+}
+
+func drainEmulatorReplies(emu *xvt.Emulator) {
+	_, _ = io.Copy(io.Discard, emu)
 }
 
 func (s *emulatorScreen) Feed(data []byte) (err error) {
