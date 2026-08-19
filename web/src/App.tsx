@@ -48,6 +48,7 @@ export const DEFAULT_STATE_CONFIG: StateConfig = {
   quiescence_ms: 1500,
   bottom_lines: 15,
   notify_on_blocked: true,
+  notify_on_idle: false,
   manifest_dir: '',
 };
 

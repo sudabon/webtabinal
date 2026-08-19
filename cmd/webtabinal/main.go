@@ -43,13 +43,25 @@ func main() {
 			fatal(err)
 		}
 		os.Exit(runStateSnapshot(os.Stdout, os.Stderr, cfg, nil, opts))
-	case "install":
-		bin, err := os.Executable()
+	case "notify":
+		opts, err := parseNotifyArgs(os.Args[2:], os.Getenv(sessionEnvVar))
 		if err != nil {
-			fatal(err)
+			// Exit 1, never 2: a stop hook exiting 2 blocks the agent's turn,
+			// and a mistyped flag must not wedge an agent.
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(1)
 		}
-		if resolved, err := filepath.EvalSymlinks(bin); err == nil {
-			bin = resolved
+		cfg, err := config.LoadOrCreate()
+		if err != nil {
+			os.Exit(0)
+		}
+		os.Exit(runNotify(os.Stdout, os.Stderr, cfg, nil, opts))
+	case "hooks":
+		os.Exit(runHooksPrint(os.Stdout, os.Stderr, os.Args[2:], resolvedExecutable()))
+	case "install":
+		bin := resolvedExecutable()
+		if bin == "" {
+			fatal(errors.New("cannot determine this binary's path"))
 		}
 		if err := launchd.Install(bin); err != nil {
 			fatal(err)
@@ -132,8 +144,23 @@ func runServe() error {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "usage: %s <serve|install|uninstall|status|open|state>\n", paths.CLIName)
+	fmt.Fprintf(os.Stderr, "usage: %s <serve|install|uninstall|status|open|state|notify|hooks>\n", paths.CLIName)
 	fmt.Fprintf(os.Stderr, "       %s state snapshot <session-id> [--lines N] [--buffer active|primary|alternate] [--json]\n", paths.CLIName)
+	fmt.Fprintf(os.Stderr, "       %s\n", notifyUsage())
+	fmt.Fprintf(os.Stderr, "       %s\n", hooksUsage())
+}
+
+// resolvedExecutable is this binary's real path, used wherever a pasted or
+// installed configuration must keep pointing at it. Empty if it cannot be told.
+func resolvedExecutable() string {
+	bin, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	if resolved, err := filepath.EvalSymlinks(bin); err == nil {
+		return resolved
+	}
+	return bin
 }
 
 func fatal(err error) {

@@ -82,6 +82,7 @@ function appConfig(colorScheme: ColorScheme, keyBindings: KeyBindings = DEFAULT_
       quiescence_ms: 1500,
       bottom_lines: 15,
       notify_on_blocked: true,
+      notify_on_idle: false,
       manifest_dir: '',
     },
     confirm_close_running: true,

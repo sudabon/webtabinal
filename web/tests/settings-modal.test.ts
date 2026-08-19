@@ -22,6 +22,7 @@ const DEFAULT_STATE: StateConfig = {
   quiescence_ms: 1500,
   bottom_lines: 15,
   notify_on_blocked: true,
+  notify_on_idle: false,
   manifest_dir: '',
 };
 
@@ -669,6 +670,58 @@ test('agent state settings persist, disable dependents, and roll back invalid nu
   assert.equal(walk(tree, (node) => node.type === 'input' && node.props?.id === 'state-quiescence')?.props?.value, 2000);
   assert.equal(walk(tree, (node) => node.props?.role === 'alert')?.props?.children, 'state.debounce_ms must be between 20 and 5000');
   assert.deepEqual(persistedNotification, { enabled: true, always: true, min_duration_ms: 0, sound: false, commands: [] });
+});
+
+test('screen-derived prompt return toggle is off by default, persists, and follows detection', async (t) => {
+  const hooks = new HookHarness();
+  const { NotificationsSettings } = await loadComponents(t, hooks);
+  let persistedState: StateConfig = { ...DEFAULT_STATE };
+  let failNext = false;
+  const statePatches: Array<Partial<StateConfig>> = [];
+  const render = () => {
+    hooks.beginRender();
+    return NotificationsSettings({
+      notification: { enabled: true, always: false, min_duration_ms: 0, sound: false, commands: [] },
+      state: persistedState,
+      permissionState: 'granted',
+      onNotificationChange: () => {
+        throw new Error('notification must not change');
+      },
+      onStateChange: (patch) => {
+        statePatches.push(patch);
+        if (failNext) throw new Error('保存に失敗しました');
+        persistedState = { ...persistedState, ...patch };
+      },
+      onPermissionRefresh: async () => 'granted',
+      onPermissionRequest: async () => 'granted',
+    });
+  };
+
+  let tree = render();
+  const findIdle = (node: TreeNode) => walk(node, (n) => n.type === 'input' && n.props?.id === 'state-notify-idle');
+  assert.equal(findIdle(tree)?.props?.checked, false, 'ships off because quiescence mistakes a pause for a finished turn');
+
+  (findIdle(tree)?.props?.onChange as (event: { target: { checked: boolean } }) => void)({ target: { checked: true } });
+  await new Promise(setImmediate);
+  tree = render();
+  assert.deepEqual(statePatches, [{ notify_on_idle: true }]);
+  assert.equal(findIdle(tree)?.props?.checked, true);
+
+  // The event is screen-derived, so it cannot outlive detection.
+  (walk(tree, (n) => n.type === 'input' && n.props?.id === 'state-enabled')?.props?.onChange as (event: { target: { checked: boolean } }) => void)({ target: { checked: false } });
+  await new Promise(setImmediate);
+  tree = render();
+  assert.equal(findIdle(tree)?.props?.disabled, true);
+
+  (walk(tree, (n) => n.type === 'input' && n.props?.id === 'state-enabled')?.props?.onChange as (event: { target: { checked: boolean } }) => void)({ target: { checked: true } });
+  await new Promise(setImmediate);
+  failNext = true;
+  tree = render();
+  (findIdle(tree)?.props?.onChange as (event: { target: { checked: boolean } }) => void)({ target: { checked: false } });
+  await new Promise(setImmediate);
+  tree = render();
+  assert.equal(findIdle(tree)?.props?.checked, true, 'a failed save rolls back to the persisted value');
+  assert.equal(walk(tree, (n) => n.props?.role === 'alert')?.props?.children, '保存に失敗しました');
 });
 
 test('Shift+Enter newline toggle persists immediately and rolls back with a visible error', async (t) => {

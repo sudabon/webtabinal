@@ -17,6 +17,12 @@ import (
 	"github.com/sudabon/webtabinal/internal/session"
 )
 
+// Notification kinds carried by the notify frame.
+const (
+	notifyKindAgentIdle    = "agent_idle"
+	notifyKindAgentBlocked = "agent_blocked"
+)
+
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true }, // Host/Origin already checked
 }
@@ -296,6 +302,32 @@ func (h *Hub) broadcastNotify(s *session.Session, ev osc.Event) {
 	}
 }
 
+// notifyFromHook broadcasts a turn-completion report from a coding agent's stop
+// hook. A report for a session that has already gone is dropped, because a hook
+// racing session teardown must not fail the agent's turn.
+func (h *Hub) notifyFromHook(sessionID, title, body, kind string) {
+	if h.manager == nil {
+		return
+	}
+	if _, ok := h.manager.Get(sessionID); !ok {
+		return
+	}
+	if !h.allowAttention(sessionID) {
+		return
+	}
+	payload := map[string]any{
+		"t":      "notify",
+		"sid":    sessionID,
+		"title":  title,
+		"body":   body,
+		"kind":   kind,
+		"source": "hook",
+	}
+	for _, c := range h.clientSnapshot() {
+		h.send(c, payload)
+	}
+}
+
 func (h *Hub) allowAttention(sessionID string) bool {
 	if h.arbiter == nil {
 		return true
@@ -318,11 +350,12 @@ func (h *Hub) onAgentSnapshot(snap agentdetect.Snapshot) {
 		return
 	}
 	st := h.cfg.Get().State
-	if kind == "agent_blocked" && !st.NotifyOnBlocked {
+	if kind == notifyKindAgentBlocked && !st.NotifyOnBlocked {
 		return
 	}
-	// A prompt return is screen-derived, so it cannot outlive detection.
-	if kind == "agent_idle" && !st.Enabled {
+	// A prompt return is screen-derived, so it cannot outlive detection, and it
+	// is opt-in because quiescence cannot tell a finished turn from a pause.
+	if kind == notifyKindAgentIdle && (!st.Enabled || !st.NotifyOnIdle) {
 		return
 	}
 	if h.manager == nil {
@@ -355,9 +388,9 @@ func (h *Hub) onAgentSnapshot(snap agentdetect.Snapshot) {
 func attentionEvent(prev, next agentdetect.State) (kind, body string, ok bool) {
 	switch {
 	case next == agentdetect.StateBlocked && prev != agentdetect.StateBlocked:
-		return "agent_blocked", "Waiting for input", true
+		return notifyKindAgentBlocked, "Waiting for input", true
 	case next == agentdetect.StateIdle && prev == agentdetect.StateWorking:
-		return "agent_idle", "Ready for input", true
+		return notifyKindAgentIdle, "Ready for input", true
 	default:
 		return "", "", false
 	}

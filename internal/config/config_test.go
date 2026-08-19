@@ -319,6 +319,11 @@ func TestStateConfigDefaults(t *testing.T) {
 	if !got.Enabled || got.DebounceMs != 120 || got.QuiescenceMs != 1500 || got.BottomLines != 15 || !got.NotifyOnBlocked || got.ManifestDir != "" {
 		t.Fatalf("Defaults().State = %+v", got)
 	}
+	// Screen quiescence cannot tell a finished turn from a thinking pause, so
+	// the prompt-return notification stays off until asked for.
+	if got.NotifyOnIdle {
+		t.Fatalf("Defaults().State.NotifyOnIdle = true, want false")
+	}
 
 	store := newTestStore(t)
 	stored := store.Public().State
@@ -605,5 +610,70 @@ func TestShiftEnterNewlineCanBeTurnedOff(t *testing.T) {
 	}
 	if store.Get().ShiftEnterNewline {
 		t.Fatal("store kept ShiftEnterNewline = true after patching it off")
+	}
+}
+
+func TestOlderConfigDefaultsNotifyOnIdleToOff(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	support := filepath.Join(home, "Library", "Application Support", "WebTabinal")
+	if err := os.MkdirAll(support, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"state":{"enabled":true,"notify_on_blocked":false,"bottom_lines":20}}`
+	if err := os.WriteFile(filepath.Join(support, "config.json"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := LoadOrCreate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := store.Public().State
+	if got.NotifyOnIdle {
+		t.Fatalf("notify_on_idle = true, want false for a config that never set it")
+	}
+	if !got.Enabled || got.NotifyOnBlocked || got.BottomLines != 20 {
+		t.Fatalf("other stored state values not preserved: %+v", got)
+	}
+}
+
+func TestConfigPreservesExplicitNotifyOnIdle(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	support := filepath.Join(home, "Library", "Application Support", "WebTabinal")
+	if err := os.MkdirAll(support, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"state":{"notify_on_idle":true}}`
+	if err := os.WriteFile(filepath.Join(support, "config.json"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := LoadOrCreate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !store.Public().State.NotifyOnIdle {
+		t.Fatal("explicit notify_on_idle=true was not preserved")
+	}
+}
+
+func TestPatchEnablesNotifyOnIdle(t *testing.T) {
+	store := newTestStore(t)
+	got, err := store.Patch(map[string]any{"state": map[string]any{"notify_on_idle": true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.State.NotifyOnIdle {
+		t.Fatalf("patched state = %+v", got.State)
+	}
+
+	reloaded, err := LoadOrCreate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reloaded.Public().State.NotifyOnIdle {
+		t.Fatal("notify_on_idle did not survive a reload")
 	}
 }

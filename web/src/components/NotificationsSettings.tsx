@@ -3,7 +3,7 @@ import type { NotificationPermissionState } from '../notification-provider';
 import type { NotificationConfig, StateConfig } from '../types';
 
 type MutableNotificationSetting = 'enabled' | 'always';
-type MutableStateFlag = 'enabled' | 'notify_on_blocked';
+type MutableStateFlag = 'enabled' | 'notify_on_blocked' | 'notify_on_idle';
 type NumericStateKey = 'debounce_ms' | 'quiescence_ms' | 'bottom_lines';
 
 type Props = {
@@ -307,6 +307,22 @@ export function NotificationsSettings({
           />
           <span className="settings-option-label">blocked を通知する</span>
           <span className="settings-option-hint">入力待ちへの遷移を通知。OSC 通知は維持</span>
+        </label>
+        <label
+          className={`settings-option ${stateValues.notify_on_idle ? 'selected' : ''} ${!detectionOn ? 'dependent-disabled' : ''}`}
+          htmlFor="state-notify-idle"
+        >
+          <input
+            id="state-notify-idle"
+            type="checkbox"
+            checked={stateValues.notify_on_idle}
+            disabled={dependentsDisabled}
+            onChange={(event) => { void commitStateFlag('notify_on_idle', event.target.checked); }}
+          />
+          <span className="settings-option-label">画面検知でプロンプト復帰を通知する</span>
+          <span className="settings-option-hint">
+            hook を設定していないエージェント向け。画面の静止で判定するため、思考中の一時停止でも通知されます
+          </span>
         </label>
       </div>
 

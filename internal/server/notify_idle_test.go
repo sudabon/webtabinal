@@ -9,6 +9,15 @@ import (
 	"github.com/sudabon/webtabinal/internal/osc"
 )
 
+// enableIdleNotify opts into the screen-derived prompt-return notification,
+// which now ships off.
+func (a *agentHub) enableIdleNotify(t *testing.T) {
+	t.Helper()
+	if _, err := a.store.Patch(map[string]any{"state": map[string]any{"notify_on_idle": true}}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (a *agentHub) transition(from, to agentdetect.State) {
 	a.hub.mu.Lock()
 	a.hub.lastAgent[a.sess.ID] = from
@@ -24,6 +33,7 @@ func (a *agentHub) transition(from, to agentdetect.State) {
 
 func TestWorkingToIdleNotifiesPromptReturn(t *testing.T) {
 	a := newAgentHub(t, "codex")
+	a.enableIdleNotify(t)
 	a.transition(agentdetect.StateWorking, agentdetect.StateIdle)
 
 	msg := a.nextNotify(t)
@@ -67,6 +77,7 @@ func TestIdleFromBlockedDoesNotNotify(t *testing.T) {
 
 func TestRepeatedIdleDoesNotNotifyAgain(t *testing.T) {
 	a := newAgentHub(t, "codex")
+	a.enableIdleNotify(t)
 	a.transition(agentdetect.StateWorking, agentdetect.StateIdle)
 	if msg := a.nextNotify(t); msg == nil {
 		t.Fatal("expected the first prompt-return notify")
@@ -87,6 +98,7 @@ func TestRepeatedIdleDoesNotNotifyAgain(t *testing.T) {
 
 func TestPromptReturnDedupesWithOSC(t *testing.T) {
 	a := newAgentHub(t, "codex")
+	a.enableIdleNotify(t)
 	a.hub.broadcastNotify(a.sess, osc.Event{Kind: osc.EventNotify, Title: "Codex", Body: "turn complete", OSC: 9})
 	if msg := a.nextNotify(t); msg == nil {
 		t.Fatal("expected the OSC notify")
@@ -107,6 +119,7 @@ func TestPromptReturnDedupesWithOSC(t *testing.T) {
 
 func TestPromptReturnSkippedWhenDetectionDisabled(t *testing.T) {
 	a := newAgentHub(t, "codex")
+	a.enableIdleNotify(t)
 	if _, err := a.store.Patch(map[string]any{"state": map[string]any{"enabled": false}}); err != nil {
 		t.Fatal(err)
 	}
@@ -114,5 +127,31 @@ func TestPromptReturnSkippedWhenDetectionDisabled(t *testing.T) {
 
 	if msg := a.nextNotify(t); msg != nil {
 		t.Fatalf("disabled detection should not produce prompt-return notifications: %#v", msg)
+	}
+}
+
+// The change that introduced state.notify_on_idle flipped this behavior off by
+// default, so a stock configuration must stay quiet on prompt return.
+func TestPromptReturnIsOffByDefault(t *testing.T) {
+	a := newAgentHub(t, "codex")
+	a.transition(agentdetect.StateWorking, agentdetect.StateIdle)
+
+	if msg := a.nextNotify(t); msg != nil {
+		t.Fatalf("screen-derived prompt return notified without notify_on_idle: %#v", msg)
+	}
+}
+
+// Turning the screen-derived notification off must not silence the approval
+// prompt, which detection reports reliably.
+func TestBlockedStillNotifiesWithIdleNotifyOff(t *testing.T) {
+	a := newAgentHub(t, "codex")
+	a.transition(agentdetect.StateWorking, agentdetect.StateBlocked)
+
+	msg := a.nextNotify(t)
+	if msg == nil {
+		t.Fatal("expected a blocked notify frame")
+	}
+	if msg["kind"] != notifyKindAgentBlocked {
+		t.Fatalf("kind = %#v", msg["kind"])
 	}
 }

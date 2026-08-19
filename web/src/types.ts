@@ -49,6 +49,9 @@ export type StateConfig = {
   quiescence_ms: number;
   bottom_lines: number;
   notify_on_blocked: boolean;
+  // Screen-derived prompt return. Off by default; a stop hook reports the same
+  // thing without mistaking a thinking pause for a finished turn.
+  notify_on_idle: boolean;
   manifest_dir: string;
 };
 

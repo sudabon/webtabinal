@@ -53,7 +53,7 @@ func TestCLISnapshotJSONAndHuman(t *testing.T) {
 		_, _ = w.Write(raw)
 	}))
 	defer ts.Close()
-	sc := snapshotClient{baseURL: ts.URL, token: "secret-token", client: ts.Client()}
+	sc := daemonClient{baseURL: ts.URL, token: "secret-token", client: ts.Client()}
 
 	var out, errBuf strings.Builder
 	code := runStateSnapshotClient(&out, &errBuf, sc, snapshotOptions{SessionID: "s1", Lines: 15, Buffer: "active", JSON: true})
@@ -101,7 +101,7 @@ func TestCLISnapshotDoesNotMutate(t *testing.T) {
 		_, _ = w.Write([]byte(`{"session_id":"s1","lines":[],"matches":{"blocked":[],"working":[],"idle":[]},"agent":{},"manifest":{}}`))
 	}))
 	defer ts.Close()
-	sc := snapshotClient{baseURL: ts.URL, token: "t", client: ts.Client()}
+	sc := daemonClient{baseURL: ts.URL, token: "t", client: ts.Client()}
 	code := runStateSnapshotClient(io.Discard, io.Discard, sc, snapshotOptions{SessionID: "s1", Lines: 15, Buffer: "active"})
 	if code != 0 {
 		t.Fatalf("exit %d", code)
@@ -130,7 +130,7 @@ func TestCLISnapshotErrorStatuses(t *testing.T) {
 			w.WriteHeader(tc.status)
 			_, _ = w.Write([]byte(`{"error":"x"}`))
 		}))
-		sc := snapshotClient{baseURL: ts.URL, token: "t", client: ts.Client()}
+		sc := daemonClient{baseURL: ts.URL, token: "t", client: ts.Client()}
 		var out, errBuf strings.Builder
 		code := runStateSnapshotClient(&out, &errBuf, sc, snapshotOptions{SessionID: "missing", Lines: 15, Buffer: "active"})
 		ts.Close()
@@ -147,10 +147,10 @@ func TestCLISnapshotErrorStatuses(t *testing.T) {
 }
 
 func TestCLISnapshotDaemonUnavailable(t *testing.T) {
-	sc := snapshotClient{
+	sc := daemonClient{
 		baseURL: "http://127.0.0.1:1",
 		token:   "t",
-		client:  &http.Client{Timeout: snapshotHTTPTimeout},
+		client:  &http.Client{Timeout: daemonHTTPTimeout},
 	}
 	var out, errBuf strings.Builder
 	code := runStateSnapshotClient(&out, &errBuf, sc, snapshotOptions{SessionID: "s1", Lines: 15, Buffer: "active"})

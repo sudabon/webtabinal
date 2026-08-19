@@ -54,15 +54,9 @@ func newAgentHub(t *testing.T, command string) *agentHub {
 	return &agentHub{hub: h, conn: c, sess: live, store: store, clock: clock}
 }
 
-// nextNotify drains frames until a notify arrives, returning nil if none does.
 func (a *agentHub) nextNotify(t *testing.T) map[string]any {
 	t.Helper()
-	for len(a.conn.send) > 0 {
-		if msg := recvJSON(t, a.conn); msg["t"] == "notify" {
-			return msg
-		}
-	}
-	return nil
+	return nextNotifyFrame(t, a.conn)
 }
 
 // Whether a notification raises a banner is the client's decision, driven by
