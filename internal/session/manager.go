@@ -358,10 +358,34 @@ func (m *Manager) reindexLocked() {
 	}
 }
 
+// shouldCloseTab decides whether an exited session's tab goes away. The rules
+// are evaluated in order; the first match wins.
+//
+//  1. auto-close disabled            -> keep
+//  2. integrated but never prompted  -> keep, so startup failures stay readable
+//  3. shell-exit signal recorded     -> close, whatever the status
+//  4. exit status 0                  -> close (also covers unintegrated shells,
+//     which never report a signal and so keep today's behaviour)
+//  5. otherwise                      -> keep
+//
+// Rule 3 exists because `exit` and Ctrl+D return the last command's status, so
+// a user-initiated exit is often non-zero.
+func shouldCloseTab(info Info, closeOnCleanExit bool) bool {
+	if !closeOnCleanExit {
+		return false
+	}
+	if info.Integrated && !info.PromptSeen {
+		return false
+	}
+	if info.ShellExited {
+		return true
+	}
+	return info.ExitCode != nil && *info.ExitCode == 0
+}
+
 func (m *Manager) handleExit(s *Session) {
 	cfg := m.cfg.Get()
-	info := s.Info()
-	if cfg.CloseTabOnCleanExit && info.ExitCode != nil && *info.ExitCode == 0 {
+	if shouldCloseTab(s.Info(), cfg.CloseTabOnCleanExit) {
 		_ = m.Delete(s.ID)
 		return
 	}

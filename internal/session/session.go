@@ -47,18 +47,31 @@ type Session struct {
 	Memo       string
 	Cols       uint16
 	Rows       uint16
+	// ShellExited records that the shell announced its own termination via the
+	// private OSC exit signal. `exit` and Ctrl+D return the last command's
+	// status, so the signal — not the status — tells us the user asked to quit.
+	ShellExited bool
+	// PromptSeen records that the shell reached its first prompt, i.e. it got
+	// far enough to be interactive rather than dying inside its startup files.
+	PromptSeen bool
 
-	mu       sync.Mutex
-	pty      *os.File
-	cmd      *exec.Cmd
-	parser   osc.Parser
-	onEvent  func(*Session, osc.Event)
-	onExit   func(*Session)
-	onOutput func(*Session, []byte)
-	logger   *log.Logger
-	done     chan struct{}
-	closed   bool
-	screen   vtscreen.Screen
+	mu         sync.Mutex
+	pty        *os.File
+	cmd        *exec.Cmd
+	parser     osc.Parser
+	onEvent    func(*Session, osc.Event)
+	onExit     func(*Session)
+	onOutput   func(*Session, []byte)
+	logger     *log.Logger
+	done       chan struct{}
+	readDone   chan struct{}
+	readClosed bool
+	closed     bool
+	screen     vtscreen.Screen
+
+	// drainWait bounds how long waitLoop waits for readLoop to finish. Tests
+	// shorten it; zero means drainTimeout.
+	drainWait time.Duration
 
 	colorQueries map[int]int
 	palette      osc.Palette
@@ -72,6 +85,8 @@ type Info struct {
 	State            State  `json:"state"`
 	ExitCode         *int   `json:"exit"`
 	Integrated       bool   `json:"integrated"`
+	ShellExited      bool   `json:"shell_exited"`
+	PromptSeen       bool   `json:"prompt_seen"`
 	Memo             string `json:"memo"`
 	RunMs            int64  `json:"run_ms,omitempty"`
 	Agent            string `json:"agent"`
@@ -83,20 +98,30 @@ type Info struct {
 
 const MaxMemoRunes = 30
 
+// drainTimeout bounds the wait for readLoop to drain the PTY after the shell
+// process is reaped. The shell-exit signal arrives as the very last bytes
+// before termination, so onExit must not run before it is parsed. A child
+// process still holding the PTY slave keeps readLoop alive indefinitely, hence
+// the ceiling; exceeding it only costs us the signal, falling back to the
+// exit-status rule.
+const drainTimeout = 300 * time.Millisecond
+
 func (s *Session) Info() Info {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	info := Info{
-		ID:         s.ID,
-		Order:      s.Order,
-		Cwd:        s.Cwd,
-		Command:    s.Command,
-		State:      s.State,
-		ExitCode:   s.ExitCode,
-		Integrated: s.Integrated,
-		Memo:       s.Memo,
-		RunMs:      s.LastRunMs,
-		AgentState: string(agentdetect.StateNone),
+		ID:          s.ID,
+		Order:       s.Order,
+		Cwd:         s.Cwd,
+		Command:     s.Command,
+		State:       s.State,
+		ExitCode:    s.ExitCode,
+		Integrated:  s.Integrated,
+		ShellExited: s.ShellExited,
+		PromptSeen:  s.PromptSeen,
+		Memo:        s.Memo,
+		RunMs:       s.LastRunMs,
+		AgentState:  string(agentdetect.StateNone),
 	}
 	if s.State == StateRunning && !s.RunStarted.IsZero() {
 		info.RunMs = time.Since(s.RunStarted).Milliseconds()
@@ -194,6 +219,7 @@ func Create(opts CreateOpts) (*Session, error) {
 		onOutput: opts.OnOutput,
 		logger:   opts.Logger,
 		done:     make(chan struct{}),
+		readDone: make(chan struct{}),
 		palette:  opts.Palette,
 		screen:   openScreen(opts.ScreenFactory, int(opts.Cols), int(opts.Rows), opts.Logger, id),
 	}
@@ -235,6 +261,7 @@ func shellArgs(shell string) []string {
 }
 
 func (s *Session) readLoop() {
+	defer s.closeReadDone()
 	buf := make([]byte, 32*1024)
 	for {
 		n, err := s.pty.Read(buf)
@@ -268,14 +295,49 @@ func (s *Session) waitLoop() {
 			code = 1
 		}
 	}
+	// Close done first so Close() stays responsive, then let readLoop finish
+	// parsing the shell's final output. applyEvent ignores events once the
+	// state is exited, so the state must be settled only after the drain.
+	close(s.done)
+	s.drainReads()
 	s.mu.Lock()
 	s.State = StateExited
 	s.ExitCode = &code
 	s.mu.Unlock()
-	close(s.done)
 	if s.onExit != nil {
 		s.onExit(s)
 	}
+}
+
+// drainReads waits, up to a bound, for readLoop to consume the output the
+// shell produced just before it died.
+func (s *Session) drainReads() {
+	s.mu.Lock()
+	readDone := s.readDone
+	wait := s.drainWait
+	s.mu.Unlock()
+	if readDone == nil {
+		return
+	}
+	if wait <= 0 {
+		wait = drainTimeout
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-readDone:
+	case <-timer.C:
+	}
+}
+
+func (s *Session) closeReadDone() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.readDone == nil || s.readClosed {
+		return
+	}
+	s.readClosed = true
+	close(s.readDone)
 }
 
 func (s *Session) handleEvents(events []osc.Event) {
@@ -376,6 +438,7 @@ func (s *Session) applyEvent(ev osc.Event) {
 		s.State = StateIdle
 		s.ExitCode = ev.ExitCode
 	case osc.EventPrompt:
+		s.PromptSeen = true
 		if s.State == StateStarting {
 			s.State = StateIdle
 		}
@@ -385,6 +448,10 @@ func (s *Session) applyEvent(ev osc.Event) {
 			}
 			s.State = StateIdle
 		}
+	case osc.EventShellExit:
+		// Deliberately touches nothing else: the shell is on its way out, and
+		// the tab-close decision is the only consumer of this flag.
+		s.ShellExited = true
 	}
 }
 

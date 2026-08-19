@@ -17,6 +17,7 @@ const (
 	EventPrompt
 	EventNotify
 	EventColorQuery
+	EventShellExit
 )
 
 type Event struct {
@@ -132,18 +133,9 @@ func parseOSC(payload string) (Event, bool) {
 		}
 		return Event{}, false
 	}
-	// OSC 9973 ; cmd ; base64
+	// OSC 9973 ; cmd ; base64  |  OSC 9973 ; exit [; code]
 	if strings.HasPrefix(payload, "9973;") {
-		rest := strings.TrimPrefix(payload, "9973;")
-		parts := strings.SplitN(rest, ";", 2)
-		if len(parts) != 2 || parts[0] != "cmd" {
-			return Event{}, false
-		}
-		decoded, err := base64.StdEncoding.DecodeString(parts[1])
-		if err != nil {
-			return Event{}, false
-		}
-		return Event{Kind: EventCmdStart, Command: string(decoded)}, true
+		return parseOSC9973(strings.TrimPrefix(payload, "9973;"))
 	}
 	// OSC 777 ; notify ; title ; body  (urxvt / iTerm-style desktop notification)
 	if strings.HasPrefix(payload, "777;") {
@@ -163,6 +155,34 @@ func parseOSC(payload string) (Event, bool) {
 			return Event{}, false
 		}
 		return Event{Kind: EventNotify, Body: body, OSC: 9}, true
+	}
+	return Event{}, false
+}
+
+// parseOSC9973 handles the WebTabinal private OSC. Unrecognised subtypes yield
+// no event so that adding one later cannot disturb existing session fields.
+func parseOSC9973(rest string) (Event, bool) {
+	subtype, arg, hasArg := strings.Cut(rest, ";")
+	switch subtype {
+	case "cmd":
+		if !hasArg {
+			return Event{}, false
+		}
+		decoded, err := base64.StdEncoding.DecodeString(arg)
+		if err != nil {
+			return Event{}, false
+		}
+		return Event{Kind: EventCmdStart, Command: string(decoded)}, true
+	case "exit":
+		// The status is carried for diagnostics only; a missing or malformed
+		// value still signals that the shell terminated on its own.
+		ev := Event{Kind: EventShellExit}
+		if hasArg {
+			if v, err := strconv.Atoi(arg); err == nil {
+				ev.ExitCode = &v
+			}
+		}
+		return ev, true
 	}
 	return Event{}, false
 }

@@ -13,7 +13,7 @@ var script []byte
 //go:embed integration.bash
 var bashScript []byte
 
-const Version = "1"
+const Version = "2"
 
 func Write() error {
 	dir, err := paths.SupportDir()

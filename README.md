@@ -353,7 +353,7 @@ make build
 | `confirm_close_running` | `true` |
 | `copy_on_select` | `false` |
 | `quit_when_no_tabs` | `true` |
-| `close_tab_on_clean_exit` | `true`（Ctrl+D などでシェルが exit 0 のときタブを閉じる） |
+| `close_tab_on_clean_exit` | `true`（`exit` / Ctrl+D などでシェルが自分の意思で終了したときにタブを閉じる。終了コードは問わない。起動に失敗して最初のプロンプトに到達しなかったシェルのタブは残る） |
 | `shift_enter_newline` | `true`（Shift+Enter で ESC+CR を送り、Claude Code / cursor-agent などで送信せず改行する。設定 → キーボードで切り替え） |
 | 新しいタブ | `Cmd+N`（またはサイドバーの ＋） |
 | タブ切り替え | `Cmd+1` … `Cmd+9` |

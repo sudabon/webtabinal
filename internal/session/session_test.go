@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -202,5 +203,158 @@ func TestCompletedRunDurationIsReported(t *testing.T) {
 				t.Fatalf("RunMs = %d, want completed duration", got)
 			}
 		})
+	}
+}
+
+func TestApplyEventShellExitOnlyRecordsTheExitRoute(t *testing.T) {
+	s := &Session{State: StateIdle, Cwd: "/tmp/proj", Command: "bash", PromptSeen: true}
+	code := 1
+
+	s.applyEvent(osc.Event{Kind: osc.EventShellExit, ExitCode: &code})
+
+	if !s.ShellExited {
+		t.Fatal("ShellExited = false, want true")
+	}
+	if s.State != StateIdle || s.Cwd != "/tmp/proj" || s.Command != "bash" {
+		t.Fatalf("session = %+v, want state/cwd/command unchanged", s)
+	}
+	if s.ExitCode != nil {
+		t.Fatalf("ExitCode = %d, want untouched", *s.ExitCode)
+	}
+}
+
+func TestApplyEventPromptMarksPromptSeen(t *testing.T) {
+	s := &Session{State: StateStarting}
+
+	s.applyEvent(osc.Event{Kind: osc.EventPrompt})
+
+	if !s.PromptSeen {
+		t.Fatal("PromptSeen = false, want true after OSC 133;A")
+	}
+	if s.State != StateIdle {
+		t.Fatalf("state = %q, want %q", s.State, StateIdle)
+	}
+}
+
+// The integration emits OSC 7 while the startup files are still running, so it
+// must not be mistaken for reaching an interactive prompt.
+func TestApplyEventCWDDoesNotMarkPromptSeen(t *testing.T) {
+	s := &Session{State: StateStarting}
+
+	s.applyEvent(osc.Event{Kind: osc.EventCWD, CWD: "/tmp"})
+
+	if s.PromptSeen {
+		t.Fatal("PromptSeen = true, want false until OSC 133;A")
+	}
+	if !s.Integrated {
+		t.Fatal("Integrated = false, want true after OSC 7")
+	}
+}
+
+func TestInfoExposesExitRouteFlags(t *testing.T) {
+	s := &Session{State: StateExited, ShellExited: true, PromptSeen: true}
+
+	info := s.Info()
+
+	if !info.ShellExited || !info.PromptSeen {
+		t.Fatalf("info = %+v, want both exit-route flags set", info)
+	}
+}
+
+// The shell-exit signal is the last thing the shell writes, so it usually
+// arrives after cmd.Wait() has already reaped the process.
+func TestWaitLoopDrainsOutputBeforeOnExit(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+
+	cmd := exec.Command("/bin/sh", "-c", "exit 1")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+
+	type snapshot struct {
+		shellExited bool
+		exitCode    *int
+	}
+	seen := make(chan snapshot, 1)
+	s := &Session{
+		ID:         "s1",
+		State:      StateIdle,
+		PromptSeen: true,
+		Ring:       NewRingBuffer(4096),
+		pty:        reader,
+		cmd:        cmd,
+		done:       make(chan struct{}),
+		readDone:   make(chan struct{}),
+		drainWait:  2 * time.Second,
+		onExit: func(sess *Session) {
+			info := sess.Info()
+			seen <- snapshot{shellExited: info.ShellExited, exitCode: info.ExitCode}
+		},
+	}
+	go s.readLoop()
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		_, _ = writer.Write([]byte("\x1b]9973;exit;1\x1b\\"))
+		_ = writer.Close()
+	}()
+
+	s.waitLoop()
+
+	got := <-seen
+	if !got.shellExited {
+		t.Fatal("ShellExited = false at onExit, want the late signal to be drained")
+	}
+	if got.exitCode == nil || *got.exitCode != 1 {
+		t.Fatalf("ExitCode = %v, want 1", got.exitCode)
+	}
+}
+
+func TestWaitLoopGivesUpOnDrainAfterTimeout(t *testing.T) {
+	// The write end stays open, so readLoop never returns — as happens when a
+	// background job still holds the PTY slave.
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	defer reader.Close()
+
+	cmd := exec.Command("/bin/sh", "-c", "exit 0")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+
+	exited := make(chan struct{})
+	s := &Session{
+		ID:        "s1",
+		State:     StateIdle,
+		Ring:      NewRingBuffer(4096),
+		pty:       reader,
+		cmd:       cmd,
+		done:      make(chan struct{}),
+		readDone:  make(chan struct{}),
+		drainWait: 30 * time.Millisecond,
+		onExit:    func(*Session) { close(exited) },
+	}
+	go s.readLoop()
+
+	start := time.Now()
+	s.waitLoop()
+	elapsed := time.Since(start)
+
+	select {
+	case <-exited:
+	default:
+		t.Fatal("onExit was not called")
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("waitLoop took %v, want it to give up near the drain bound", elapsed)
+	}
+	if s.Info().State != StateExited {
+		t.Fatalf("state = %q, want %q", s.Info().State, StateExited)
 	}
 }
