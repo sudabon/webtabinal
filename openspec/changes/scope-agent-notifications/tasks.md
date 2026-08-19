@@ -35,6 +35,12 @@
 - [x] 6.2 `web/src/components/NotificationsSettings.tsx` にコマンド一覧の表示・追加フォーム・削除ボタンを追加する。空リストの意味を説明文で示す
 - [x] 6.3 必要なスタイルを追加する
 
+## 6.5 大文字小文字の取り違え対策
+
+- [x] 6.5.1 `commandAllowsNotification()` の照合を大文字小文字非依存にする。macOS がテキスト欄の先頭を大文字化するため、`Task` と `task` の不一致で通知が黙って止まるのを防ぐ
+- [x] 6.5.2 追加フォームの重複判定も大文字小文字非依存にする
+- [x] 6.5.3 追加フォームの input に `autoCapitalize` / `autoCorrect` / `spellCheck` / `autoComplete` の抑止を付ける（既存のシェルパス欄・マニフェスト欄と同じ方針）
+
 ## 7. ドキュメントと検証
 
 - [x] 7.1 README の通知セクションを、`notification.commands` を中心とした説明に書き換える。`state.notify_agents` の記述を差し替える

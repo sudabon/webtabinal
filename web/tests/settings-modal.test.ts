@@ -784,6 +784,15 @@ test('notification command whitelist can be listed, added and removed', async (t
   tree = await submit(tree, 'claude');
   assert.equal(patches.length, 1, 'a duplicate must not send a patch');
 
+  tree = await submit(tree, 'Claude');
+  assert.equal(patches.length, 1, 'a duplicate differing only in case must not send a patch');
+
+  const input = field(tree);
+  assert.equal(input?.props?.autoCapitalize, 'off', 'macOS must not capitalize a command name');
+  assert.equal(input?.props?.autoCorrect, 'off');
+  assert.equal(input?.props?.spellCheck, false);
+  assert.equal(input?.props?.autoComplete, 'off');
+
   const remove = walk(tree, (node) => node.type === 'button' && node.props?.['data-command'] === 'codex');
   (remove?.props?.onClick as () => void)();
   await new Promise(setImmediate);

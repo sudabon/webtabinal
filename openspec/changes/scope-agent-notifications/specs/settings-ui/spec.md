@@ -4,7 +4,9 @@
 
 The Notifications category SHALL expose an editor for `notification.commands`. It SHALL list the persisted commands, let the user add a command, and let the user remove any listed command. Adding and removing SHALL persist immediately through the existing config API, so a command can be added while working without editing a file or restarting the daemon.
 
-Submitted text SHALL be trimmed. A blank submission SHALL be rejected without a request. A command already in the list SHALL NOT be added twice. A failed update SHALL report an error and restore the last successfully persisted list.
+Submitted text SHALL be trimmed. A blank submission SHALL be rejected without a request. A command already in the list SHALL NOT be added twice, comparing without regard to case. A failed update SHALL report an error and restore the last successfully persisted list.
+
+The add field SHALL disable automatic capitalization, autocorrection, spellchecking, and autocomplete, so the host platform does not alter a command name as it is typed.
 
 The editor SHALL state that an empty list means every session may notify.
 
@@ -32,6 +34,16 @@ The editor SHALL state that an empty list means every session may notify.
 
 - **WHEN** the user submits a command that the list already contains
 - **THEN** no config patch is sent and the list is unchanged
+
+#### Scenario: Duplicate differing only in case is not added
+
+- **WHEN** the list contains `claude` and the user submits `Claude`
+- **THEN** no config patch is sent and the list is unchanged
+
+#### Scenario: The platform does not alter a typed command
+
+- **WHEN** the add field is rendered
+- **THEN** automatic capitalization, autocorrection, spellchecking, and autocomplete are disabled on it
 
 #### Scenario: Removing a command persists immediately
 

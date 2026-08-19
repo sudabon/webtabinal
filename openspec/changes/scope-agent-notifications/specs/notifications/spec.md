@@ -4,7 +4,7 @@
 
 Every desktop notification SHALL be raised only when the session's command is permitted by `notification.commands`. This applies uniformly to command completion, OSC wait, screen-derived `blocked`, and prompt-return notifications, so a single list determines which sessions can produce a banner.
 
-A command SHALL be permitted when the basename of the first whitespace-separated token of the session's command equals an entry in the list. An empty list SHALL disable the restriction so every session may notify. Suppressing all notifications SHALL remain the job of `notification.enabled`.
+A command SHALL be permitted when the basename of the first whitespace-separated token of the session's command equals an entry in the list, ignoring case. An empty list SHALL disable the restriction so every session may notify. Suppressing all notifications SHALL remain the job of `notification.enabled`.
 
 A restricted event SHALL still mark the session unread and update the Dock badge, so nothing is lost when the banner is withheld.
 
@@ -27,6 +27,11 @@ A restricted event SHALL still mark the session unread and update the Dock badge
 
 - **WHEN** `notification.commands` is `["claude"]` and a session running `codex` emits OSC 9 or enters `blocked`
 - **THEN** no platform notification is requested and the tab is still marked unread if it is not active
+
+#### Scenario: Case does not decide whether a notification appears
+
+- **WHEN** `notification.commands` contains `Task` and a session runs `task`
+- **THEN** the command is permitted
 
 #### Scenario: Empty list disables the restriction
 

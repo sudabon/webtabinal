@@ -115,8 +115,17 @@ test('an unknown command is not allowed while a whitelist is set', () => {
   assert.equal(commandAllowsNotification(undefined, AGENTS), false);
 });
 
-test('whitelist entries are trimmed and matched exactly', () => {
+test('whitelist entries are trimmed and matched on the whole name', () => {
   assert.equal(commandAllowsNotification('claude', [' claude ']), true);
   assert.equal(commandAllowsNotification('claude', ['clau']), false);
-  assert.equal(commandAllowsNotification('claude', ['Claude']), false);
+  assert.equal(commandAllowsNotification('claude', ['claudex']), false);
+});
+
+// macOS capitalizes the first letter in text fields, so a list entry can differ from
+// the command as typed. Case must not decide whether a notification appears.
+test('whitelist matching ignores case', () => {
+  assert.equal(commandAllowsNotification('task', ['Task']), true);
+  assert.equal(commandAllowsNotification('Task', ['task']), true);
+  assert.equal(commandAllowsNotification('/usr/bin/TASK --run', ['task']), true);
+  assert.equal(commandAllowsNotification('taskrunner', ['Task']), false);
 });

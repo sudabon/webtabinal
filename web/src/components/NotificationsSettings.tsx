@@ -128,7 +128,9 @@ export function NotificationsSettings({
 
   const addCommand = useCallback(async () => {
     const name = commandDraft.trim();
-    if (!name || values.commands.includes(name)) return;
+    // Matching ignores case, so a case-only variant would be a dead duplicate.
+    const exists = values.commands.some((entry) => entry.toLowerCase() === name.toLowerCase());
+    if (!name || exists) return;
     setCommandDraft('');
     await commitCommands([...values.commands, name]);
   }, [commandDraft, commitCommands, values.commands]);
@@ -266,6 +268,10 @@ export function NotificationsSettings({
           type="text"
           value={commandDraft}
           placeholder="コマンド名（例: make）"
+          spellCheck={false}
+          autoComplete="off"
+          autoCapitalize="off"
+          autoCorrect="off"
           disabled={saving}
           onChange={(event) => setCommandDraft(event.target.value)}
         />
