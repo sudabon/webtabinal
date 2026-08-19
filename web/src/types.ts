@@ -55,6 +55,15 @@ export type StateConfig = {
   manifest_dir: string;
 };
 
+export type RestoreConfig = {
+  enabled: boolean;
+  // Agent ID -> resume command. Overrides a built-in; an empty string disables
+  // that agent. Edited in config.json only, never from the settings UI.
+  commands: Record<string, string>;
+  max_sessions: number;
+  max_age_hours: number;
+};
+
 export type AppConfig = {
   port: number;
   shell: string;
@@ -66,6 +75,7 @@ export type AppConfig = {
   color_scheme: ColorScheme;
   notification: NotificationConfig;
   state: StateConfig;
+  restore: RestoreConfig;
   confirm_close_running: boolean;
   copy_on_select: boolean;
   quit_when_no_tabs: boolean;
@@ -74,9 +84,10 @@ export type AppConfig = {
   key_bindings: KeyBindings;
 };
 
-export type AppConfigPatch = Omit<Partial<AppConfig>, 'notification' | 'state'> & {
+export type AppConfigPatch = Omit<Partial<AppConfig>, 'notification' | 'state' | 'restore'> & {
   notification?: Partial<NotificationConfig>;
   state?: Partial<StateConfig>;
+  restore?: Partial<RestoreConfig>;
 };
 
 export type ServerMsg =

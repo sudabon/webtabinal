@@ -16,6 +16,7 @@ import (
 	"github.com/sudabon/webtabinal/internal/launchd"
 	"github.com/sudabon/webtabinal/internal/logging"
 	"github.com/sudabon/webtabinal/internal/paths"
+	"github.com/sudabon/webtabinal/internal/restore"
 	"github.com/sudabon/webtabinal/internal/server"
 	"github.com/sudabon/webtabinal/internal/session"
 	"github.com/sudabon/webtabinal/internal/static"
@@ -128,6 +129,23 @@ func runServe() error {
 
 	mgr := session.NewManager(cfg, logger)
 	defer mgr.Close()
+
+	restorePath, err := paths.RestorePath()
+	if err != nil {
+		return err
+	}
+	// Before the server starts listening, so a client that attaches straight
+	// away already sees the restored tabs.
+	runRestore(mgr, cfg.Get().Restore, restorePath, logger)
+	recorder := restore.StartRecorder(restore.RecorderOpts{
+		Path:      restorePath,
+		Observe:   func() []restore.Observed { return observedFrom(mgr.List()) },
+		Overrides: func() map[string]string { return cfg.Get().Restore.Commands },
+		Logger:    logger,
+	})
+	// Registered after mgr.Close, so this runs first and the final snapshot is
+	// taken while the sessions are still alive.
+	defer recorder.Stop()
 
 	hub := server.NewHub(mgr, cfg, logger)
 	if static.IsPlaceholder() {

@@ -60,6 +60,17 @@ func ZshInjectDir() (string, error) {
 	return filepath.Join(dir, "zsh-inject"), nil
 }
 
+// RestorePath is the agent-session restore snapshot. It holds operational
+// state, not user-edited settings, which is why it sits beside config.json
+// rather than inside it.
+func RestorePath() (string, error) {
+	dir, err := SupportDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "restore.json"), nil
+}
+
 func BashIntegrationPath() (string, error) {
 	dir, err := SupportDir()
 	if err != nil {
