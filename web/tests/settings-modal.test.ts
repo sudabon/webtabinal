@@ -202,6 +202,8 @@ test('settings modal opens on Appearance and can switch to General', async (t) =
     onColorSchemeChange: () => {},
     shell: '/bin/zsh',
     onShellChange: () => {},
+    restoreEnabled: true,
+    onRestoreEnabledChange: () => {},
     keyBindings: DEFAULT_KEY_BINDINGS,
     onKeyBindingsChange: () => {},
     shiftEnterNewline: true,
@@ -273,7 +275,7 @@ test('shell field shows the current path, commits on blur and Enter, and skips u
 
   const render = () => {
     hooks.beginRender();
-    return GeneralSettings({ shell: '/bin/zsh', onShellChange });
+    return GeneralSettings({ shell: '/bin/zsh', onShellChange, restoreEnabled: true, onRestoreEnabledChange: () => {} });
   };
 
   const tree = render();
@@ -329,7 +331,7 @@ test('invalid shell path rolls back to the last persisted value', async (t) => {
 
   const render = () => {
     hooks.beginRender();
-    return GeneralSettings({ shell: '/bin/zsh', onShellChange });
+    return GeneralSettings({ shell: '/bin/zsh', onShellChange, restoreEnabled: true, onRestoreEnabledChange: () => {} });
   };
 
   let input = findInput(render());
@@ -896,4 +898,86 @@ test('a failed command patch is reported and rolled back', async (t) => {
   });
   assert.deepEqual(listed, ['claude'], 'a failed add must roll back to the persisted list');
   assert.equal(walk(tree, (node) => node.props?.role === 'alert')?.props?.children, '設定を保存できませんでした');
+});
+
+test('agent session restore toggle reflects the stored value, persists immediately, and rolls back on failure', async (t) => {
+  const hooks = new HookHarness();
+  const { GeneralSettings } = await loadComponents(t, hooks);
+  const committed: boolean[] = [];
+  let persisted = false;
+  let failNext = false;
+
+  const onRestoreEnabledChange = async (enabled: boolean) => {
+    committed.push(enabled);
+    if (failNext) throw new Error('保存に失敗しました');
+    persisted = enabled;
+  };
+
+  const render = () => {
+    hooks.beginRender();
+    return GeneralSettings({
+      shell: '/bin/zsh',
+      onShellChange: () => {},
+      restoreEnabled: persisted,
+      onRestoreEnabledChange,
+    });
+  };
+
+  // Stored value is false, so the toggle opens in the off position.
+  let tree = render();
+  const toggle = findByAriaLabel(tree, 'エージェントセッションを復元');
+  assert.equal(toggle.props?.checked, false);
+  assert.equal(toggle.props?.type, 'checkbox');
+
+  // No save button: flipping it patches straight away.
+  (toggle.props?.onChange as (e: unknown) => void)({ target: { checked: true } });
+  await new Promise(setImmediate);
+  tree = render();
+  assert.deepEqual(committed, [true]);
+  assert.equal(findByAriaLabel(tree, 'エージェントセッションを復元').props?.checked, true);
+
+  failNext = true;
+  (findByAriaLabel(tree, 'エージェントセッションを復元').props?.onChange as (e: unknown) => void)({
+    target: { checked: false },
+  });
+  await new Promise(setImmediate);
+  tree = render();
+  assert.deepEqual(committed, [true, false]);
+  assert.equal(
+    findByAriaLabel(tree, 'エージェントセッションを復元').props?.checked,
+    true,
+    'a failed save must roll the checkbox back to the persisted value',
+  );
+  assert.equal(walk(tree, (n) => n.props?.role === 'alert')?.props?.children, '保存に失敗しました');
+});
+
+test('general settings explain that restored tabs run the resume command and offer no command editor', async (t) => {
+  const hooks = new HookHarness();
+  const { GeneralSettings } = await loadComponents(t, hooks);
+
+  hooks.beginRender();
+  const tree = GeneralSettings({
+    shell: '/bin/zsh',
+    onShellChange: () => {},
+    restoreEnabled: true,
+    onRestoreEnabledChange: () => {},
+  });
+
+  const hint = walk(
+    tree,
+    (n) => n.type === 'span' && /resume/.test(String((n.props as { children?: unknown })?.children ?? '')),
+  );
+  assert.ok(hint, 'the toggle must say restored tabs run the resume command');
+  assert.match(String(hint?.props?.children ?? ''), /自動実行/);
+
+  // Per-agent resume commands stay in config.json: no text input beyond the
+  // shell field may appear here.
+  const inputs: unknown[] = [];
+  walk(tree, (n) => {
+    if (n.type === 'input') inputs.push(n);
+    return false;
+  });
+  const textInputs = (inputs as TreeNode[]).filter((n) => n.props?.type !== 'checkbox');
+  assert.equal(textInputs.length, 1, 'only the shell field may be a text input');
+  assert.equal(textInputs[0]?.props?.['aria-label'], '起動シェル');
 });

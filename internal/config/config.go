@@ -46,6 +46,20 @@ type StateConfig struct {
 	ManifestDir  string `json:"manifest_dir"`
 }
 
+// RestoreConfig controls bringing coding-agent tabs back after the daemon
+// stops. Commands maps an agent ID to the command a restored tab runs; an
+// entry overrides the built-in for that agent and an explicit empty string
+// disables restore for it. An empty map leaves every built-in in place.
+type RestoreConfig struct {
+	Enabled  bool              `json:"enabled"`
+	Commands map[string]string `json:"commands"`
+	// MaxSessions caps how many entries one restore pass recreates.
+	MaxSessions int `json:"max_sessions"`
+	// MaxAgeHours skips entries last observed longer ago than this. Zero
+	// disables the age check, so it is never filled in from the default.
+	MaxAgeHours int `json:"max_age_hours"`
+}
+
 type KeyBindingsConfig struct {
 	Enabled bool   `json:"enabled"`
 	Prefix  string `json:"prefix"`
@@ -71,6 +85,7 @@ type Config struct {
 	ColorScheme         string             `json:"color_scheme"`
 	Notification        NotificationConfig `json:"notification"`
 	State               StateConfig        `json:"state"`
+	Restore             RestoreConfig      `json:"restore"`
 	ConfirmCloseRunning bool               `json:"confirm_close_running"`
 	CopyOnSelect        bool               `json:"copy_on_select"`
 	QuitWhenNoTabs      bool               `json:"quit_when_no_tabs"`
@@ -105,6 +120,12 @@ func Defaults() Config {
 			NotifyOnBlocked: true,
 			NotifyOnIdle:    false,
 			ManifestDir:     "",
+		},
+		Restore: RestoreConfig{
+			Enabled:     true,
+			Commands:    map[string]string{},
+			MaxSessions: 8,
+			MaxAgeHours: 72,
 		},
 		ConfirmCloseRunning: true,
 		CopyOnSelect:        false,
@@ -219,6 +240,17 @@ func (s *Store) applyDefaults() {
 	// also what a missing key unmarshals to, so an older config lands on the
 	// default and an explicit true survives untouched.
 
+	if s.cfg.Restore.MaxSessions == 0 {
+		s.cfg.Restore.MaxSessions = d.Restore.MaxSessions
+	}
+	if s.cfg.Restore.Commands == nil {
+		s.cfg.Restore.Commands = map[string]string{}
+	}
+	// restore.enabled and restore.max_age_hours need no fill-in. Unmarshalling
+	// over Defaults() leaves a missing key at its default, so an absent key
+	// lands on true / 72 while an explicit false / 0 survives — and 0 is a
+	// meaningful age, not "unset".
+
 	// A missing key unmarshals to nil, while an explicit [] unmarshals to an
 	// empty non-nil slice. Only the former gets the default list.
 	if s.cfg.Notification.Commands == nil {
@@ -235,6 +267,13 @@ func (s *Store) applyDefaults() {
 func (c Config) clone() Config {
 	if c.Notification.Commands != nil {
 		c.Notification.Commands = append([]string(nil), c.Notification.Commands...)
+	}
+	if c.Restore.Commands != nil {
+		commands := make(map[string]string, len(c.Restore.Commands))
+		for agent, command := range c.Restore.Commands {
+			commands[agent] = command
+		}
+		c.Restore.Commands = commands
 	}
 	return c
 }
@@ -333,6 +372,36 @@ func validate(cfg Config) error {
 	}
 	if err := validateState(cfg.State); err != nil {
 		return err
+	}
+	if err := validateRestore(cfg.Restore); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MaxResumeCommandLen bounds a resume command, which is typed into a live
+// shell; the limit keeps a stray value from becoming a huge injected line.
+const MaxResumeCommandLen = 512
+
+func validateRestore(r RestoreConfig) error {
+	if r.MaxSessions < 1 || r.MaxSessions > 32 {
+		return fmt.Errorf("restore.max_sessions must be between 1 and 32")
+	}
+	if r.MaxAgeHours < 0 {
+		return fmt.Errorf("restore.max_age_hours must be non-negative")
+	}
+	for agent, command := range r.Commands {
+		if strings.TrimSpace(agent) == "" {
+			return fmt.Errorf("restore.commands keys must not be blank")
+		}
+		// An empty command is how a user disables one agent, so only the
+		// shape of a non-empty command is checked here.
+		if strings.ContainsAny(command, "\r\n") {
+			return fmt.Errorf("restore.commands[%s] must not contain a line break", agent)
+		}
+		if len(command) > MaxResumeCommandLen {
+			return fmt.Errorf("restore.commands[%s] must be at most %d characters", agent, MaxResumeCommandLen)
+		}
 	}
 	return nil
 }

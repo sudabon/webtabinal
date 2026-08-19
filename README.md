@@ -313,6 +313,32 @@ cursor-agent は端末に OSC を書きません（`/dev/tty` を開けず、標
 | タブ順が勝手に変わる | 自動ソートはしない | `blocked` でも daemon の並びと Cmd+数字は変わらない |
 | プロンプトごとに `command not found` が出る（`_cmux_prompt_command` など） | daemon を起動したターミナルのシェル統合 | 他のターミナルが export した `PROMPT_COMMAND` を daemon が継承していた。現在は取り除くので、古い daemon を停止して起動し直す。応急処置はそのタブで `__webtabinal_rest_prompt=` |
 
+## エージェントセッションの復元
+
+再起動・ログアウト・クラッシュでデーモンが止まると PTY ごとセッションが消えますが、エージェントを動かしていたタブは次回の起動で開き直します（既定でオン。設定 → 一般、または `restore.enabled`）。
+
+- **対象はエージェントを検出しているタブだけ**です。素のシェルのタブは記録も復元もしません。復元できる resume コマンドを持たないエージェント（`generic` など）も対象外です。
+- カレントディレクトリ・メモ・タブ順を引き継ぎます。スクロールバックやエージェントの出力は復元しません。
+- 復元したタブでは、シェルのプロンプトが出たあとに resume コマンドが**自動実行**されます。組み込みの既定値は `claude` → `claude --continue`、`codex` → `codex resume --last`、`cursor-agent` → `cursor-agent resume` です。
+- 同じエージェント・同じディレクトリのタブが 2 本以上あるときは、自動実行するのは最初の 1 本だけです。2 本目以降は同じコマンドを入力行に置くだけで実行しません（同じ会話を二重に開かないため）。
+- 次のものは復元しません: ディレクトリが消えているタブ、`restore.max_age_hours`（既定 72 時間）より古い記録、`restore.max_sessions`（既定 8 本）を超えた分、コマンドが空・改行入り・512 文字超のもの。スキップした理由はデーモンログに残ります。
+- 既にタブが 1 つ以上開いている状態では復元しません。
+
+resume コマンドを変えたい、または特定のエージェントだけ復元したくない場合は `config.json` の `restore.commands` を使います（設定 UI にはありません）。空文字を入れるとそのエージェントの復元が無効になります。
+
+```json
+{
+  "restore": {
+    "commands": {
+      "claude": "claude --resume",
+      "cursor-agent": ""
+    }
+  }
+}
+```
+
+記録は `~/Library/Application Support/WebTabinal/restore.json`（0600、原子的に置換）に置かれます。プロジェクトのパスが入るため、`config.json` と同様に**共有・コミットしないでください**。
+
 ## LaunchAgent（任意: ログイン時の常駐）
 
 `.app` がデーモンを起動できるため必須ではありません。ログイン時から常駐させたい場合や、デーモンが異常終了したときに KeepAlive で復帰させたい場合に使います（正常終了や「既に listen 中」の成功終了では再起動しません）。
@@ -350,6 +376,10 @@ make build
 | `state.notify_on_blocked` | `true` |
 | `state.notify_on_idle` | `false`（画面検知によるプロンプト復帰通知。既定オフ。ターン完了は stop hook で受け取るのが確実。hook を入れないなら `true` にする） |
 | `state.manifest_dir` | `""`（空なら `~/Library/Application Support/WebTabinal/manifests`。変更はデーモン再起動後） |
+| `restore.enabled` | `true`（デーモン起動時にエージェントのタブを復元する。設定 → 一般から切り替え可） |
+| `restore.commands` | `{}`（空なら組み込みの resume コマンド。エージェント ID ごとに上書きでき、空文字でそのエージェントの復元を無効化。config.json のみで編集） |
+| `restore.max_sessions` | `8`（1–32。1 回の復元で開き直すタブ数の上限） |
+| `restore.max_age_hours` | `72`（0 以上。これより古い記録は復元しない。`0` で期限なし） |
 | `confirm_close_running` | `true` |
 | `copy_on_select` | `false` |
 | `quit_when_no_tabs` | `true` |

@@ -493,6 +493,19 @@ export default function App() {
     [reportActionError],
   );
 
+  const changeRestoreEnabled = useCallback(
+    async (enabled: boolean) => {
+      try {
+        const next = await api.patchConfig({ restore: { enabled } });
+        setConfig(next);
+      } catch (err) {
+        reportActionError(err);
+        throw err;
+      }
+    },
+    [reportActionError],
+  );
+
   const changeKeyBindings = useCallback(
     async (key_bindings: KeyBindings) => {
       try {
@@ -642,6 +655,8 @@ export default function App() {
         onColorSchemeChange={(scheme) => void changeColorScheme(scheme)}
         shell={config?.shell ?? '/bin/zsh'}
         onShellChange={changeShell}
+        restoreEnabled={config?.restore?.enabled !== false}
+        onRestoreEnabledChange={changeRestoreEnabled}
         keyBindings={config?.key_bindings ?? DEFAULT_KEY_BINDINGS}
         onKeyBindingsChange={changeKeyBindings}
         shiftEnterNewline={config?.shift_enter_newline !== false}

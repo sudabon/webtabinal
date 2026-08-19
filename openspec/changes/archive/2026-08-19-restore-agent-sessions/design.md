@@ -92,5 +92,5 @@
 
 ## Open Questions
 
-- `cursor-agent resume` の実機挙動（ピッカーか直近再開か）を確認し、組み込み既定値を最終決定する。表の値だけの変更で、spec とタスク分割には影響しない。
+- ~~`cursor-agent resume` の実機挙動（ピッカーか直近再開か）を確認し、組み込み既定値を最終決定する。~~ **解決（2026-08-19、実機の `--help` で確認）**: `cursor-agent` には `resume` サブコマンド（"Resume the latest chat session"）があり、非対話で直近セッションを再開する。ピッカーになるのは `--resume`（chatId 省略時、"Select a session to resume"）と `ls` の側なので、組み込み既定値は `cursor-agent resume` のままで正しい。あわせて `codex resume --last`（`resume` は既定でピッカー、`--last` で直近）と `claude --continue`（`-c, --continue`）も実機で確認済み。3 つとも変更なし。
 - `claude` の既定を `--continue` のままにするか、将来 hook で会話 ID を記録して `--resume <id>` に寄せるか。今回は `--continue` で確定し、ID 記録は別変更として扱う。

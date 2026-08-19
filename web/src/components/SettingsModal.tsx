@@ -21,6 +21,8 @@ type Props = {
   onColorSchemeChange: (scheme: ColorScheme) => void;
   shell: string;
   onShellChange: (shell: string) => void | Promise<void>;
+  restoreEnabled: boolean;
+  onRestoreEnabledChange: (enabled: boolean) => void | Promise<void>;
   keyBindings: KeyBindings;
   onKeyBindingsChange: (bindings: KeyBindings) => void | Promise<void>;
   shiftEnterNewline: boolean;
@@ -41,6 +43,8 @@ export function SettingsModal({
   onColorSchemeChange,
   shell,
   onShellChange,
+  restoreEnabled,
+  onRestoreEnabledChange,
   keyBindings,
   onKeyBindingsChange,
   shiftEnterNewline,
@@ -114,7 +118,12 @@ export function SettingsModal({
           {category === 'appearance' ? (
             <AppearanceSettings colorScheme={colorScheme} onColorSchemeChange={onColorSchemeChange} />
           ) : category === 'general' ? (
-            <GeneralSettings shell={shell} onShellChange={onShellChange} />
+            <GeneralSettings
+              shell={shell}
+              onShellChange={onShellChange}
+              restoreEnabled={restoreEnabled}
+              onRestoreEnabledChange={onRestoreEnabledChange}
+            />
           ) : category === 'notifications' ? (
             <NotificationsSettings
               notification={notification}

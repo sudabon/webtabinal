@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -676,4 +677,142 @@ func TestPatchEnablesNotifyOnIdle(t *testing.T) {
 	if !reloaded.Public().State.NotifyOnIdle {
 		t.Fatal("notify_on_idle did not survive a reload")
 	}
+}
+
+func TestRestoreDefaults(t *testing.T) {
+	got := newTestStore(t).Public().Restore
+
+	want := RestoreConfig{Enabled: true, Commands: map[string]string{}, MaxSessions: 8, MaxAgeHours: 72}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("restore = %+v, want %+v", got, want)
+	}
+}
+
+func TestOlderConfigGainsRestoreDefaults(t *testing.T) {
+	store := storeWithConfig(t, `{"port":8642,"font_size":16,"state":{"enabled":false}}`)
+
+	got := store.Public()
+	if !reflect.DeepEqual(got.Restore, Defaults().Restore) {
+		t.Fatalf("restore = %+v, want defaults %+v", got.Restore, Defaults().Restore)
+	}
+	if got.FontSize != 16 || got.State.Enabled {
+		t.Fatalf("unrelated values changed: font_size=%d state.enabled=%v", got.FontSize, got.State.Enabled)
+	}
+}
+
+func TestOlderConfigPreservesExplicitRestoreValues(t *testing.T) {
+	store := storeWithConfig(t, `{"restore":{"enabled":false,"max_age_hours":0}}`)
+
+	got := store.Public().Restore
+	if got.Enabled {
+		t.Fatal("explicit restore.enabled=false was not preserved")
+	}
+	// Zero means "no age limit", so it must not be refilled from the default.
+	if got.MaxAgeHours != 0 {
+		t.Fatalf("max_age_hours = %d, want the explicit 0 preserved", got.MaxAgeHours)
+	}
+	if got.MaxSessions != 8 {
+		t.Fatalf("max_sessions = %d, want the missing key filled with 8", got.MaxSessions)
+	}
+}
+
+func TestExplicitEmptyResumeCommandIsPreserved(t *testing.T) {
+	store := storeWithConfig(t, `{"restore":{"commands":{"cursor-agent":""}}}`)
+
+	got := store.Public().Restore.Commands
+	command, ok := got["cursor-agent"]
+	if !ok {
+		t.Fatalf("commands = %v, want a cursor-agent entry", got)
+	}
+	if command != "" {
+		t.Fatalf("cursor-agent = %q, want the empty string preserved", command)
+	}
+}
+
+func TestPatchRejectsInvalidRestore(t *testing.T) {
+	store := newTestStore(t)
+	before := store.Public()
+
+	tests := []struct {
+		name  string
+		patch map[string]any
+	}{
+		{"max_sessions zero", map[string]any{"restore": map[string]any{"max_sessions": 0}}},
+		{"max_sessions too large", map[string]any{"restore": map[string]any{"max_sessions": 33}}},
+		{"negative max_age_hours", map[string]any{"restore": map[string]any{"max_age_hours": -1}}},
+		{"command with a line feed", map[string]any{"restore": map[string]any{"commands": map[string]any{"claude": "claude --continue\nrm -rf /"}}}},
+		{"command with a carriage return", map[string]any{"restore": map[string]any{"commands": map[string]any{"claude": "claude\r"}}}},
+		{"command too long", map[string]any{"restore": map[string]any{"commands": map[string]any{"claude": strings.Repeat("a", MaxResumeCommandLen+1)}}}},
+		{"blank agent key", map[string]any{"restore": map[string]any{"commands": map[string]any{"  ": "claude --continue"}}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := store.Patch(tc.patch); err == nil {
+				t.Fatal("Patch accepted an invalid restore config")
+			}
+			if !reflect.DeepEqual(store.Public().Restore, before.Restore) {
+				t.Fatalf("stored restore changed to %+v, want %+v", store.Public().Restore, before.Restore)
+			}
+		})
+	}
+}
+
+func TestPatchRestoreEnabled(t *testing.T) {
+	store := newTestStore(t)
+
+	got, err := store.Patch(map[string]any{"restore": map[string]any{"enabled": false}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Restore.Enabled {
+		t.Fatal("restore.enabled = true after patching it off")
+	}
+	// The other restore fields must survive a partial patch.
+	if got.Restore.MaxSessions != 8 || got.Restore.MaxAgeHours != 72 {
+		t.Fatalf("unspecified restore fields changed: %+v", got.Restore)
+	}
+}
+
+func TestPatchAcceptsResumeCommandOverride(t *testing.T) {
+	store := newTestStore(t)
+
+	got, err := store.Patch(map[string]any{"restore": map[string]any{"commands": map[string]any{"claude": "claude --resume"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Restore.Commands["claude"] != "claude --resume" {
+		t.Fatalf("commands = %v, want the claude override stored", got.Restore.Commands)
+	}
+}
+
+func TestGetDoesNotShareResumeCommandsBacking(t *testing.T) {
+	store := newTestStore(t)
+	if _, err := store.Patch(map[string]any{"restore": map[string]any{"commands": map[string]any{"claude": "claude --resume"}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	store.Get().Restore.Commands["claude"] = "tampered"
+
+	if got := store.Get().Restore.Commands["claude"]; got != "claude --resume" {
+		t.Fatalf("stored command = %q, want the caller's write not to reach it", got)
+	}
+}
+
+// storeWithConfig writes raw config JSON into an isolated HOME and loads it.
+func storeWithConfig(t *testing.T, raw string) *Store {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	support := filepath.Join(home, "Library", "Application Support", "WebTabinal")
+	if err := os.MkdirAll(support, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(support, "config.json"), []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := LoadOrCreate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store
 }
