@@ -448,3 +448,44 @@ func TestPatchStatePreservesUnspecifiedFields(t *testing.T) {
 		t.Fatalf("unspecified state fields changed: %+v", got.State)
 	}
 }
+
+func TestShiftEnterNewlineDefaultsToTrue(t *testing.T) {
+	if got := Defaults().ShiftEnterNewline; !got {
+		t.Fatal("Defaults().ShiftEnterNewline = false, want true")
+	}
+}
+
+func TestShiftEnterNewlineSurvivesConfigWrittenBeforeTheOption(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	support := filepath.Join(home, "Library", "Application Support", "WebTabinal")
+	if err := os.MkdirAll(support, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(support, "config.json"), []byte(`{"port":8642}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := LoadOrCreate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := store.Public().ShiftEnterNewline; !got {
+		t.Fatal("config.json written before the option resolved shift_enter_newline to false, want true")
+	}
+}
+
+func TestShiftEnterNewlineCanBeTurnedOff(t *testing.T) {
+	store := newTestStore(t)
+
+	next, err := store.Patch(map[string]any{"shift_enter_newline": false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.ShiftEnterNewline {
+		t.Fatal("Patch returned ShiftEnterNewline = true, want false")
+	}
+	if store.Get().ShiftEnterNewline {
+		t.Fatal("store kept ShiftEnterNewline = true after patching it off")
+	}
+}

@@ -18,13 +18,14 @@ import {
 import { openExternalLink, shouldUseWebglRenderer } from '../util';
 import { decodeB64Bytes, TerminalSocket } from '../ws';
 import { shouldApplyTerminalFocus } from '../terminal-focus';
-import { shouldForwardTerminalInput } from '../terminal-input';
+import { shiftEnterSequence, shouldForwardTerminalInput } from '../terminal-input';
 
 type Props = {
   sessionId: string | null;
   socket: TerminalSocket | null;
   config: AppConfig | null;
   copyOnSelect: boolean;
+  shiftEnterNewline: boolean;
   theme: ResolvedTheme;
   focusSeq: number;
   settingsOpen: boolean;
@@ -36,6 +37,7 @@ export function TerminalView({
   socket,
   config,
   copyOnSelect,
+  shiftEnterNewline,
   theme,
   focusSeq,
   settingsOpen,
@@ -50,6 +52,8 @@ export function TerminalView({
   socketRef.current = socket;
   const copyOnSelectRef = useRef(copyOnSelect);
   copyOnSelectRef.current = copyOnSelect;
+  const shiftEnterNewlineRef = useRef(shiftEnterNewline);
+  shiftEnterNewlineRef.current = shiftEnterNewline;
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -97,6 +101,16 @@ export function TerminalView({
     });
 
     term.attachCustomKeyEventHandler((ev) => {
+      const rewritten = shiftEnterSequence(ev, shiftEnterNewlineRef.current);
+      if (rewritten) {
+        const sid = attachedRef.current;
+        if (sid && shouldForwardTerminalInput(sid, replayingRef.current) && socketRef.current) {
+          socketRef.current.input(sid, rewritten);
+        }
+        ev.preventDefault();
+        return false;
+      }
+
       const action = clipboardShortcutAction(ev, {
         textFieldFocused: isTextFieldElement(document.activeElement),
       });

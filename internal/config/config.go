@@ -60,6 +60,7 @@ type Config struct {
 	CopyOnSelect        bool               `json:"copy_on_select"`
 	QuitWhenNoTabs      bool               `json:"quit_when_no_tabs"`
 	CloseTabOnCleanExit bool               `json:"close_tab_on_clean_exit"`
+	ShiftEnterNewline   bool               `json:"shift_enter_newline"`
 	KeyBindings         KeyBindingsConfig  `json:"key_bindings"`
 	AuthToken           string             `json:"auth_token"`
 }
@@ -92,6 +93,7 @@ func Defaults() Config {
 		CopyOnSelect:        false,
 		QuitWhenNoTabs:      true,
 		CloseTabOnCleanExit: true,
+		ShiftEnterNewline:   true,
 		KeyBindings: KeyBindingsConfig{
 			Enabled: false,
 			Prefix:  "ctrl+j",

@@ -141,6 +141,8 @@ async function loadComponents(t: { after: (fn: () => Promise<void> | void) => vo
       onShellChange: (shell: string) => void | Promise<void>;
       keyBindings: KeyBindings;
       onKeyBindingsChange: (bindings: KeyBindings) => void | Promise<void>;
+      shiftEnterNewline: boolean;
+      onShiftEnterNewlineChange: (enabled: boolean) => void | Promise<void>;
       notification: NotificationConfig;
       notificationPermission: NotificationPermissionState;
       onNotificationChange: (patch: Partial<NotificationConfig>) => void | Promise<void>;
@@ -164,6 +166,8 @@ async function loadComponents(t: { after: (fn: () => Promise<void> | void) => vo
     KeyboardSettings: (props: {
       bindings: KeyBindings;
       onBindingsChange: (bindings: KeyBindings) => void | Promise<void>;
+      shiftEnterNewline: boolean;
+      onShiftEnterNewlineChange: (enabled: boolean) => void | Promise<void>;
     }) => TreeNode;
   };
   const { NotificationsSettings } = await server.ssrLoadModule('/src/components/NotificationsSettings.tsx') as {
@@ -199,6 +203,8 @@ test('settings modal opens on Appearance and can switch to General', async (t) =
     onShellChange: () => {},
     keyBindings: DEFAULT_KEY_BINDINGS,
     onKeyBindingsChange: () => {},
+    shiftEnterNewline: true,
+    onShiftEnterNewlineChange: () => {},
     notification: { enabled: true, always: false, min_duration_ms: 0, sound: false },
     notificationPermission: 'default' as const,
     onNotificationChange: () => {},
@@ -376,7 +382,12 @@ test('keyboard settings show current bindings, persist recording, roll back inva
 
   const render = () => {
     hooks.beginRender();
-    return KeyboardSettings({ bindings: persisted, onBindingsChange });
+    return KeyboardSettings({
+      bindings: persisted,
+      onBindingsChange,
+      shiftEnterNewline: true,
+      onShiftEnterNewlineChange: () => {},
+    });
   };
 
   let tree = render();
@@ -656,4 +667,53 @@ test('agent state settings persist, disable dependents, and roll back invalid nu
   assert.equal(walk(tree, (node) => node.type === 'input' && node.props?.id === 'state-quiescence')?.props?.value, 2000);
   assert.equal(walk(tree, (node) => node.props?.role === 'alert')?.props?.children, 'state.debounce_ms must be between 20 and 5000');
   assert.deepEqual(persistedNotification, { enabled: true, always: true, min_duration_ms: 0, sound: false });
+});
+
+test('Shift+Enter newline toggle persists immediately and rolls back with a visible error', async (t) => {
+  const hooks = new HookHarness();
+  const { KeyboardSettings } = await loadComponents(t, hooks);
+  installKeyCapture();
+  const committed: boolean[] = [];
+  let persisted = true;
+  let failNext = false;
+
+  const onShiftEnterNewlineChange = async (enabled: boolean) => {
+    committed.push(enabled);
+    if (failNext) throw new Error('保存に失敗しました');
+    persisted = enabled;
+  };
+
+  const render = () => {
+    hooks.beginRender();
+    return KeyboardSettings({
+      bindings: DEFAULT_KEY_BINDINGS,
+      onBindingsChange: () => {},
+      shiftEnterNewline: persisted,
+      onShiftEnterNewlineChange,
+    });
+  };
+
+  let tree = render();
+  const toggle = findByAriaLabel(tree, 'Shift+Enter で改行');
+  assert.equal(toggle.props?.checked, true);
+
+  (toggle.props?.onChange as (e: unknown) => void)({ target: { checked: false } });
+  await new Promise(setImmediate);
+  tree = render();
+  assert.deepEqual(committed, [false]);
+  assert.equal(findByAriaLabel(tree, 'Shift+Enter で改行').props?.checked, false);
+
+  failNext = true;
+  (findByAriaLabel(tree, 'Shift+Enter で改行').props?.onChange as (e: unknown) => void)({
+    target: { checked: true },
+  });
+  await new Promise(setImmediate);
+  tree = render();
+  assert.deepEqual(committed, [false, true]);
+  assert.equal(
+    findByAriaLabel(tree, 'Shift+Enter で改行').props?.checked,
+    false,
+    'a failed save must roll the checkbox back to the persisted value',
+  );
+  assert.equal(walk(tree, (n) => n.props?.role === 'alert')?.props?.children, '保存に失敗しました');
 });

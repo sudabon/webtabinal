@@ -23,6 +23,8 @@ type Props = {
   onShellChange: (shell: string) => void | Promise<void>;
   keyBindings: KeyBindings;
   onKeyBindingsChange: (bindings: KeyBindings) => void | Promise<void>;
+  shiftEnterNewline: boolean;
+  onShiftEnterNewlineChange: (enabled: boolean) => void | Promise<void>;
   notification: NotificationConfig;
   notificationPermission: NotificationPermissionState;
   onNotificationChange: (patch: Partial<NotificationConfig>) => void | Promise<void>;
@@ -41,6 +43,8 @@ export function SettingsModal({
   onShellChange,
   keyBindings,
   onKeyBindingsChange,
+  shiftEnterNewline,
+  onShiftEnterNewlineChange,
   notification,
   notificationPermission,
   onNotificationChange,
@@ -122,7 +126,12 @@ export function SettingsModal({
               onPermissionRequest={onNotificationPermissionRequest}
             />
           ) : (
-            <KeyboardSettings bindings={keyBindings} onBindingsChange={onKeyBindingsChange} />
+            <KeyboardSettings
+              bindings={keyBindings}
+              onBindingsChange={onKeyBindingsChange}
+              shiftEnterNewline={shiftEnterNewline}
+              onShiftEnterNewlineChange={onShiftEnterNewlineChange}
+            />
           )}
           <footer className="settings-footer">
             <button ref={closeButtonRef} className="settings-close" type="button" onClick={onClose}>

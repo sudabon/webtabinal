@@ -65,6 +65,7 @@ export type AppConfig = {
   copy_on_select: boolean;
   quit_when_no_tabs: boolean;
   close_tab_on_clean_exit: boolean;
+  shift_enter_newline: boolean;
   key_bindings: KeyBindings;
 };
 

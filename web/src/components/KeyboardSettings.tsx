@@ -13,6 +13,8 @@ type Slot = 'prefix' | 'next_tab' | 'prev_tab';
 type Props = {
   bindings: KeyBindings;
   onBindingsChange: (bindings: KeyBindings) => void | Promise<void>;
+  shiftEnterNewline: boolean;
+  onShiftEnterNewlineChange: (enabled: boolean) => void | Promise<void>;
 };
 
 const ISSUE_MESSAGE: Record<BindingIssue, string> = {
@@ -30,17 +32,47 @@ function sameBindings(a: KeyBindings, b: KeyBindings): boolean {
     && a.prev_tab === b.prev_tab;
 }
 
-export function KeyboardSettings({ bindings: persisted, onBindingsChange }: Props) {
+export function KeyboardSettings({
+  bindings: persisted,
+  onBindingsChange,
+  shiftEnterNewline: persistedShiftEnter,
+  onShiftEnterNewlineChange,
+}: Props) {
   const [bindings, setBindings] = useState(persisted);
+  const [shiftEnter, setShiftEnter] = useState(persistedShiftEnter);
+  const [shiftEnterError, setShiftEnterError] = useState<string | null>(null);
   const [recording, setRecording] = useState<Slot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const persistedRef = useRef(persisted);
+  const persistedShiftEnterRef = useRef(persistedShiftEnter);
   const inFlightRef = useRef(false);
+  const shiftEnterInFlightRef = useRef(false);
 
   useEffect(() => {
     setBindings(persisted);
     persistedRef.current = persisted;
   }, [persisted]);
+
+  useEffect(() => {
+    setShiftEnter(persistedShiftEnter);
+    persistedShiftEnterRef.current = persistedShiftEnter;
+  }, [persistedShiftEnter]);
+
+  const commitShiftEnter = useCallback(async (next: boolean) => {
+    if (shiftEnterInFlightRef.current) return;
+    shiftEnterInFlightRef.current = true;
+    setShiftEnter(next);
+    setShiftEnterError(null);
+    try {
+      await onShiftEnterNewlineChange(next);
+      persistedShiftEnterRef.current = next;
+    } catch (err) {
+      setShiftEnter(persistedShiftEnterRef.current);
+      setShiftEnterError(err instanceof Error ? err.message : String(err));
+    } finally {
+      shiftEnterInFlightRef.current = false;
+    }
+  }, [onShiftEnterNewlineChange]);
 
   const commit = useCallback(async (next: KeyBindings) => {
     const issue = validateBindings(next);
@@ -94,69 +126,91 @@ export function KeyboardSettings({ bindings: persisted, onBindingsChange }: Prop
   };
 
   return (
-    <section className="settings-section">
-      <h3 className="settings-heading">タブ移動</h3>
-      <label className={`settings-option ${bindings.enabled ? 'selected' : ''}`}>
-        <input
-          type="checkbox"
-          checked={bindings.enabled}
-          aria-label="タブ移動ショートカット"
-          onChange={(e) => void commit({ ...bindings, enabled: e.target.checked })}
-        />
-        <span className="settings-option-label">ショートカットを有効にする</span>
-        <span className="settings-option-hint">プレフィックスのあと n / p で隣のタブへ</span>
-      </label>
+    <>
+      <section className="settings-section">
+        <h3 className="settings-heading">プロンプト入力</h3>
+        <label className={`settings-option ${shiftEnter ? 'selected' : ''}`}>
+          <input
+            type="checkbox"
+            checked={shiftEnter}
+            aria-label="Shift+Enter で改行"
+            onChange={(e) => void commitShiftEnter(e.target.checked)}
+          />
+          <span className="settings-option-label">Shift+Enter で改行する</span>
+          <span className="settings-option-hint">エージェントに送信せず改行を入れる</span>
+        </label>
 
-      <div className="settings-bindings">
-        <div className="settings-binding-row">
-          <span>プレフィックス</span>
-          <button
-            type="button"
-            className={`settings-binding${recording === 'prefix' ? ' recording' : ''}`}
-            aria-label="プレフィックスキー"
-            onClick={() => { setError(null); setRecording('prefix'); }}
-          >
-            {label('prefix')}
-          </button>
-        </div>
-        <div className="settings-binding-row">
-          <span>次のタブ</span>
-          <button
-            type="button"
-            className={`settings-binding${recording === 'next_tab' ? ' recording' : ''}`}
-            aria-label="次のタブ"
-            onClick={() => { setError(null); setRecording('next_tab'); }}
-          >
-            {label('next_tab')}
-          </button>
-        </div>
-        <div className="settings-binding-row">
-          <span>前のタブ</span>
-          <button
-            type="button"
-            className={`settings-binding${recording === 'prev_tab' ? ' recording' : ''}`}
-            aria-label="前のタブ"
-            onClick={() => { setError(null); setRecording('prev_tab'); }}
-          >
-            {label('prev_tab')}
-          </button>
-        </div>
-      </div>
+        {shiftEnterError && (
+          <p className="settings-field-error" role="alert">
+            {shiftEnterError}
+          </p>
+        )}
+      </section>
 
-      {error && (
-        <p className="settings-field-error" role="alert">
-          {error}
-        </p>
-      )}
+      <section className="settings-section">
+        <h3 className="settings-heading">タブ移動</h3>
+        <label className={`settings-option ${bindings.enabled ? 'selected' : ''}`}>
+          <input
+            type="checkbox"
+            checked={bindings.enabled}
+            aria-label="タブ移動ショートカット"
+            onChange={(e) => void commit({ ...bindings, enabled: e.target.checked })}
+          />
+          <span className="settings-option-label">ショートカットを有効にする</span>
+          <span className="settings-option-hint">プレフィックスのあと n / p で隣のタブへ</span>
+        </label>
 
-      <button
-        type="button"
-        className="settings-reset"
-        aria-label="キー割り当てをリセット"
-        onClick={() => void commit({ ...DEFAULT_KEY_BINDINGS, enabled: bindings.enabled })}
-      >
-        キー割り当てをリセット
-      </button>
-    </section>
+        <div className="settings-bindings">
+          <div className="settings-binding-row">
+            <span>プレフィックス</span>
+            <button
+              type="button"
+              className={`settings-binding${recording === 'prefix' ? ' recording' : ''}`}
+              aria-label="プレフィックスキー"
+              onClick={() => { setError(null); setRecording('prefix'); }}
+            >
+              {label('prefix')}
+            </button>
+          </div>
+          <div className="settings-binding-row">
+            <span>次のタブ</span>
+            <button
+              type="button"
+              className={`settings-binding${recording === 'next_tab' ? ' recording' : ''}`}
+              aria-label="次のタブ"
+              onClick={() => { setError(null); setRecording('next_tab'); }}
+            >
+              {label('next_tab')}
+            </button>
+          </div>
+          <div className="settings-binding-row">
+            <span>前のタブ</span>
+            <button
+              type="button"
+              className={`settings-binding${recording === 'prev_tab' ? ' recording' : ''}`}
+              aria-label="前のタブ"
+              onClick={() => { setError(null); setRecording('prev_tab'); }}
+            >
+              {label('prev_tab')}
+            </button>
+          </div>
+        </div>
+
+        {error && (
+          <p className="settings-field-error" role="alert">
+            {error}
+          </p>
+        )}
+
+        <button
+          type="button"
+          className="settings-reset"
+          aria-label="キー割り当てをリセット"
+          onClick={() => void commit({ ...DEFAULT_KEY_BINDINGS, enabled: bindings.enabled })}
+        >
+          キー割り当てをリセット
+        </button>
+      </section>
+    </>
   );
 }

@@ -499,6 +499,19 @@ export default function App() {
     [reportActionError],
   );
 
+  const changeShiftEnterNewline = useCallback(
+    async (shift_enter_newline: boolean) => {
+      try {
+        const next = await api.patchConfig({ shift_enter_newline });
+        setConfig(next);
+      } catch (err) {
+        reportActionError(err);
+        throw err;
+      }
+    },
+    [reportActionError],
+  );
+
   const changeNotification = useCallback(
     async (patch: Partial<NotificationConfig>) => {
       try {
@@ -604,6 +617,7 @@ export default function App() {
           socket={socket}
           config={config}
           copyOnSelect={!!config?.copy_on_select}
+          shiftEnterNewline={config?.shift_enter_newline !== false}
           theme={theme}
           focusSeq={focusSeq}
           settingsOpen={settingsOpen}
@@ -623,6 +637,8 @@ export default function App() {
         onShellChange={changeShell}
         keyBindings={config?.key_bindings ?? DEFAULT_KEY_BINDINGS}
         onKeyBindingsChange={changeKeyBindings}
+        shiftEnterNewline={config?.shift_enter_newline !== false}
+        onShiftEnterNewlineChange={changeShiftEnterNewline}
         notification={config?.notification ?? DEFAULT_NOTIFICATION_CONFIG}
         notificationPermission={notificationPermission}
         onNotificationChange={changeNotification}

@@ -261,6 +261,7 @@ make build
 | `copy_on_select` | `false` |
 | `quit_when_no_tabs` | `true` |
 | `close_tab_on_clean_exit` | `true`（Ctrl+D などでシェルが exit 0 のときタブを閉じる） |
+| `shift_enter_newline` | `true`（Shift+Enter で ESC+CR を送り、Claude Code / cursor-agent などで送信せず改行する。設定 → キーボードで切り替え） |
 | 新しいタブ | `Cmd+N`（またはサイドバーの ＋） |
 | タブ切り替え | `Cmd+1` … `Cmd+9` |
 | 隣のタブへ移動 | 既定はオフ。設定 → キーボードで有効化。既定の割り当ては `Ctrl+J` のあと `n`（次）/ `p`（前） |
