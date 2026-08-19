@@ -40,7 +40,7 @@ func TestWorkingToIdleNotifiesPromptReturn(t *testing.T) {
 		t.Fatalf("body = %v, want a ready-for-input message", msg["body"])
 	}
 	if _, ok := msg["banner"]; ok {
-		t.Fatalf("listed agent should not carry a banner flag: %#v", msg)
+		t.Fatalf("daemon must not decide banner eligibility: %#v", msg)
 	}
 	if extra := a.nextNotify(t); extra != nil {
 		t.Fatalf("expected exactly one notify, got another: %#v", extra)
@@ -82,20 +82,6 @@ func TestRepeatedIdleDoesNotNotifyAgain(t *testing.T) {
 	})
 	if msg := a.nextNotify(t); msg != nil {
 		t.Fatalf("repeated idle evidence notified again: %#v", msg)
-	}
-}
-
-func TestPromptReturnForUnlistedAgentIsBannerSuppressed(t *testing.T) {
-	a := newAgentHub(t, "codex")
-	a.setNotifyAgents(t, []any{"claude"})
-	a.transition(agentdetect.StateWorking, agentdetect.StateIdle)
-
-	msg := a.nextNotify(t)
-	if msg == nil {
-		t.Fatal("expected a notify frame so the tab can still be marked unread")
-	}
-	if msg["kind"] != "agent_idle" || msg["banner"] != false {
-		t.Fatalf("unlisted prompt return should be banner-suppressed: %#v", msg)
 	}
 }
 

@@ -282,8 +282,7 @@ func (h *Hub) broadcastNotify(s *session.Session, ev osc.Event) {
 	if strings.TrimSpace(ev.Title) == "" && strings.TrimSpace(ev.Body) == "" {
 		return
 	}
-	banner := h.bannerAllowed(h.sessionAgentID(s.ID))
-	if banner && !h.allowAttention(s.ID) {
+	if !h.allowAttention(s.ID) {
 		return
 	}
 	payload := map[string]any{
@@ -291,9 +290,6 @@ func (h *Hub) broadcastNotify(s *session.Session, ev osc.Event) {
 		"sid":   s.ID,
 		"title": ev.Title,
 		"body":  ev.Body,
-	}
-	if !banner {
-		payload["banner"] = false
 	}
 	for _, c := range h.clientSnapshot() {
 		h.send(c, payload)
@@ -305,44 +301,6 @@ func (h *Hub) allowAttention(sessionID string) bool {
 		return true
 	}
 	return h.arbiter.Allow(sessionID)
-}
-
-// bannerAllowed reports whether an agent-attention event for agentID may raise
-// a desktop banner. A restricted event is still delivered so the tab is marked
-// unread; only the banner is withheld.
-func (h *Hub) bannerAllowed(agentID string) bool {
-	if h.cfg == nil {
-		return true
-	}
-	st := h.cfg.Get().State
-	if !st.Enabled {
-		return true
-	}
-	if agentID == "" || agentID == agentdetect.IDGeneric {
-		return false
-	}
-	if len(st.NotifyAgents) == 0 {
-		return true
-	}
-	for _, id := range st.NotifyAgents {
-		if id == agentID {
-			return true
-		}
-	}
-	return false
-}
-
-// sessionAgentID reports the agent currently detected for a session. It is
-// used by signals that carry no snapshot of their own, such as OSC events.
-func (h *Hub) sessionAgentID(sessionID string) string {
-	if h.manager == nil {
-		return ""
-	}
-	snap, ok := h.manager.AgentSnapshot(sessionID)
-	if !ok {
-		return ""
-	}
-	return snap.AgentID
 }
 
 func (h *Hub) onAgentSnapshot(snap agentdetect.Snapshot) {
@@ -374,8 +332,7 @@ func (h *Hub) onAgentSnapshot(snap agentdetect.Snapshot) {
 	if !found {
 		return
 	}
-	banner := h.bannerAllowed(snap.AgentID)
-	if banner && !h.allowAttention(snap.SessionID) {
+	if !h.allowAttention(snap.SessionID) {
 		return
 	}
 	payload := map[string]any{
@@ -385,9 +342,6 @@ func (h *Hub) onAgentSnapshot(snap agentdetect.Snapshot) {
 		"body":   body,
 		"kind":   kind,
 		"source": "screen",
-	}
-	if !banner {
-		payload["banner"] = false
 	}
 	for _, c := range h.clientSnapshot() {
 		h.send(c, payload)

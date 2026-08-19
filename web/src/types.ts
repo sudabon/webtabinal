@@ -39,6 +39,8 @@ export type NotificationConfig = {
   always: boolean;
   min_duration_ms: number;
   sound: boolean;
+  // Session commands allowed to raise a banner. Empty disables the restriction.
+  commands: string[];
 };
 
 export type StateConfig = {
@@ -47,7 +49,6 @@ export type StateConfig = {
   quiescence_ms: number;
   bottom_lines: number;
   notify_on_blocked: boolean;
-  notify_agents: string[];
   manifest_dir: string;
 };
 
@@ -94,8 +95,6 @@ export type ServerMsg =
       body: string;
       kind?: string;
       source?: string;
-      // false when the daemon restricted this event to the unread mark.
-      banner?: boolean;
     }
   | { t: 'output'; sid: string; data: string }
   | { t: 'replay'; sid: string; data: string; done: boolean }

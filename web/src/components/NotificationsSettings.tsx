@@ -49,6 +49,7 @@ export function NotificationsSettings({
   onPermissionRequest,
 }: Props) {
   const [values, setValues] = useState(notification);
+  const [commandDraft, setCommandDraft] = useState('');
   const [stateValues, setStateValues] = useState(state);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [permission, setPermission] = useState(permissionState);
@@ -106,6 +107,35 @@ export function NotificationsSettings({
       setSaving(false);
     }
   }, [onNotificationChange]);
+
+  const commitCommands = useCallback(async (next: string[]) => {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+    setSaving(true);
+    setError(null);
+    setValues((current) => ({ ...current, commands: next }));
+    try {
+      await onNotificationChange({ commands: next });
+      persistedRef.current = { ...persistedRef.current, commands: next };
+    } catch (saveError) {
+      setValues(persistedRef.current);
+      setError(errorMessage(saveError));
+    } finally {
+      inFlightRef.current = false;
+      setSaving(false);
+    }
+  }, [onNotificationChange]);
+
+  const addCommand = useCallback(async () => {
+    const name = commandDraft.trim();
+    if (!name || values.commands.includes(name)) return;
+    setCommandDraft('');
+    await commitCommands([...values.commands, name]);
+  }, [commandDraft, commitCommands, values.commands]);
+
+  const removeCommand = useCallback(async (name: string) => {
+    await commitCommands(values.commands.filter((entry) => entry !== name));
+  }, [commitCommands, values.commands]);
 
   const commitStateFlag = useCallback(async (key: MutableStateFlag, checked: boolean) => {
     if (inFlightRef.current) return;
@@ -202,6 +232,45 @@ export function NotificationsSettings({
           <span className="settings-option-hint">前面のアクティブタブも対象</span>
         </label>
       </div>
+
+      <h3 className="settings-heading">通知するコマンド</h3>
+      <p className="settings-note">
+        ここに挙げたコマンドのセッションだけが通知を出します（完了・入力待ち・ターン完了のすべて）。
+        一覧が空のときはすべてのセッションが通知します。通知を全部止めるときは「通知を有効にする」をオフにしてください。
+        一覧から外れたセッションもタブの未読ドットは付きます。
+      </p>
+      <div className="settings-command-list">
+        {values.commands.length === 0
+          ? <span className="settings-command-empty">すべてのセッションが通知します</span>
+          : values.commands.map((name) => (
+            <button
+              key={name}
+              type="button"
+              className="settings-command-chip"
+              data-command={name}
+              disabled={saving}
+              aria-label={`${name} を通知するコマンドから外す`}
+              onClick={() => { void removeCommand(name); }}
+            >
+              {name}
+              <span aria-hidden="true">×</span>
+            </button>
+          ))}
+      </div>
+      <form
+        className="settings-command-add"
+        onSubmit={(event) => { event.preventDefault(); void addCommand(); }}
+      >
+        <input
+          id="notification-command-input"
+          type="text"
+          value={commandDraft}
+          placeholder="コマンド名（例: make）"
+          disabled={saving}
+          onChange={(event) => setCommandDraft(event.target.value)}
+        />
+        <button type="submit" disabled={saving || commandDraft.trim() === ''}>追加</button>
+      </form>
 
       <h3 className="settings-heading">エージェント状態</h3>
       <div className="settings-options">

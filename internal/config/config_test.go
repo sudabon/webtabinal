@@ -319,9 +319,6 @@ func TestStateConfigDefaults(t *testing.T) {
 	if !got.Enabled || got.DebounceMs != 120 || got.QuiescenceMs != 1500 || got.BottomLines != 15 || !got.NotifyOnBlocked || got.ManifestDir != "" {
 		t.Fatalf("Defaults().State = %+v", got)
 	}
-	if want := []string{"claude", "codex", "cursor-agent"}; !reflect.DeepEqual(got.NotifyAgents, want) {
-		t.Fatalf("Defaults().State.NotifyAgents = %v, want %v", got.NotifyAgents, want)
-	}
 
 	store := newTestStore(t)
 	stored := store.Public().State
@@ -330,14 +327,24 @@ func TestStateConfigDefaults(t *testing.T) {
 	}
 }
 
-func TestOlderConfigGainsNotifyAgentsDefault(t *testing.T) {
+func TestNotificationCommandsDefaults(t *testing.T) {
+	want := []string{"claude", "codex", "cursor-agent", "agent"}
+	if got := Defaults().Notification.Commands; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Defaults().Notification.Commands = %v, want %v", got, want)
+	}
+	if got := newTestStore(t).Public().Notification.Commands; !reflect.DeepEqual(got, want) {
+		t.Fatalf("first-launch commands = %v, want %v", got, want)
+	}
+}
+
+func TestOlderConfigGainsNotificationCommandsDefault(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	support := filepath.Join(home, "Library", "Application Support", "WebTabinal")
 	if err := os.MkdirAll(support, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	body := `{"state":{"enabled":true,"debounce_ms":200,"quiescence_ms":2000,"bottom_lines":20,"notify_on_blocked":false}}`
+	body := `{"notification":{"enabled":true,"always":true,"min_duration_ms":4000,"sound":true}}`
 	if err := os.WriteFile(filepath.Join(support, "config.json"), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -346,23 +353,23 @@ func TestOlderConfigGainsNotifyAgentsDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := store.Public().State
-	if want := []string{"claude", "codex", "cursor-agent"}; !reflect.DeepEqual(got.NotifyAgents, want) {
-		t.Fatalf("migrated notify_agents = %v, want %v", got.NotifyAgents, want)
+	got := store.Public().Notification
+	if want := []string{"claude", "codex", "cursor-agent", "agent"}; !reflect.DeepEqual(got.Commands, want) {
+		t.Fatalf("migrated commands = %v, want %v", got.Commands, want)
 	}
-	if got.DebounceMs != 200 || got.QuiescenceMs != 2000 || got.BottomLines != 20 || got.NotifyOnBlocked {
-		t.Fatalf("other stored state values changed: %+v", got)
+	if !got.Always || got.MinDurationMs != 4000 || !got.Sound {
+		t.Fatalf("other stored notification values changed: %+v", got)
 	}
 }
 
-func TestExplicitEmptyNotifyAgentsIsPreserved(t *testing.T) {
+func TestExplicitEmptyNotificationCommandsIsPreserved(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	support := filepath.Join(home, "Library", "Application Support", "WebTabinal")
 	if err := os.MkdirAll(support, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(support, "config.json"), []byte(`{"state":{"notify_agents":[]}}`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(support, "config.json"), []byte(`{"notification":{"commands":[]}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -370,72 +377,69 @@ func TestExplicitEmptyNotifyAgentsIsPreserved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := store.Public().State.NotifyAgents; len(got) != 0 {
-		t.Fatalf("explicit empty notify_agents = %v, want empty", got)
+	if got := store.Public().Notification.Commands; len(got) != 0 {
+		t.Fatalf("explicit empty commands = %v, want empty", got)
 	}
 }
 
-func TestPatchNotifyAgents(t *testing.T) {
+func TestPatchNotificationCommands(t *testing.T) {
 	store := newTestStore(t)
 
-	got, err := store.Patch(map[string]any{"state": map[string]any{"notify_agents": []any{" claude ", "aider"}}})
+	got, err := store.Patch(map[string]any{"notification": map[string]any{"commands": []any{" claude ", "make"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"claude", "aider"}; !reflect.DeepEqual(got.State.NotifyAgents, want) {
-		t.Fatalf("notify_agents = %v, want %v", got.State.NotifyAgents, want)
+	if want := []string{"claude", "make"}; !reflect.DeepEqual(got.Notification.Commands, want) {
+		t.Fatalf("commands = %v, want %v", got.Notification.Commands, want)
 	}
 
-	got, err = store.Patch(map[string]any{"state": map[string]any{"notify_agents": []any{}}})
+	got, err = store.Patch(map[string]any{"notification": map[string]any{"commands": []any{}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.State.NotifyAgents) != 0 {
-		t.Fatalf("notify_agents = %v, want empty", got.State.NotifyAgents)
+	if len(got.Notification.Commands) != 0 {
+		t.Fatalf("commands = %v, want empty", got.Notification.Commands)
 	}
 }
 
-func TestPatchRejectsBlankNotifyAgentEntry(t *testing.T) {
+func TestPatchRejectsBlankNotificationCommand(t *testing.T) {
 	store := newTestStore(t)
-	if _, err := store.Patch(map[string]any{"state": map[string]any{"notify_agents": []any{"claude"}}}); err != nil {
-		t.Fatal(err)
-	}
 	before := store.Public()
 
 	for _, entry := range []string{"", "   "} {
-		if _, err := store.Patch(map[string]any{"state": map[string]any{"notify_agents": []any{"claude", entry}}}); err == nil {
+		if _, err := store.Patch(map[string]any{"notification": map[string]any{"commands": []any{"claude", entry}}}); err == nil {
 			t.Fatalf("Patch(%q) returned nil error", entry)
 		}
 		if got := store.Public(); !reflect.DeepEqual(got, before) {
-			t.Fatalf("stored config changed after rejection: %+v", got.State)
+			t.Fatalf("stored config changed after rejection: %+v", got.Notification)
 		}
 	}
 }
 
 // A rejected patch must not write through the stored slice's backing array,
 // which encoding/json reuses when the replacement fits in existing capacity.
-func TestRejectedNotifyAgentsPatchDoesNotAliasStoredSlice(t *testing.T) {
+func TestRejectedCommandsPatchDoesNotAliasStoredSlice(t *testing.T) {
 	store := newTestStore(t)
 	before := store.Public()
 
 	if _, err := store.Patch(map[string]any{
-		"state": map[string]any{"notify_agents": []any{"", "codex", "cursor-agent"}},
+		"notification": map[string]any{"commands": []any{"", "codex", "cursor-agent", "agent"}},
 	}); err == nil {
 		t.Fatal("Patch returned nil error")
 	}
 	if got := store.Public(); !reflect.DeepEqual(got, before) {
-		t.Fatalf("stored config changed after rejection: %v, want %v", got.State.NotifyAgents, before.State.NotifyAgents)
+		t.Fatalf("stored config changed after rejection: %v, want %v", got.Notification.Commands, before.Notification.Commands)
 	}
 }
 
-func TestGetDoesNotShareNotifyAgentsBacking(t *testing.T) {
+func TestGetDoesNotShareNotificationCommandsBacking(t *testing.T) {
 	store := newTestStore(t)
 	got := store.Get()
-	if len(got.State.NotifyAgents) == 0 {
-		t.Fatal("expected default notify_agents")
+	if len(got.Notification.Commands) == 0 {
+		t.Fatal("expected default notification commands")
 	}
-	got.State.NotifyAgents[0] = "mutated"
-	if store.Get().State.NotifyAgents[0] == "mutated" {
+	got.Notification.Commands[0] = "mutated"
+	if store.Get().Notification.Commands[0] == "mutated" {
 		t.Fatal("caller mutation leaked into stored config")
 	}
 }

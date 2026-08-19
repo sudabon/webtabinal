@@ -517,6 +517,80 @@ body,
   margin-top: 16px;
 }
 
+.settings-note {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.settings-command-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.settings-command-empty {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.settings-command-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.settings-command-chip:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.settings-command-chip span {
+  color: var(--muted);
+}
+
+.settings-command-add {
+  display: flex;
+  gap: 8px;
+}
+
+.settings-command-add input {
+  flex: 1;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.settings-command-add button {
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.settings-command-add button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
 .settings-advanced-toggle {
   padding: 6px 0;
   border: 0;

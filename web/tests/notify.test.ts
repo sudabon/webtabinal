@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { agentWaitContent, shouldRaiseDesktopNotification } from '../src/notify.ts';
+import {
+  agentWaitContent,
+  commandAllowsNotification,
+  shouldRaiseDesktopNotification,
+} from '../src/notify.ts';
 
 test('wait notify is shown for a background tab', () => {
   assert.equal(
@@ -83,4 +87,36 @@ test('agent wait content falls back to command then WebTabinal', () => {
     title: 'Codex',
     body: 'Waiting for input',
   });
+});
+
+const AGENTS = ['claude', 'codex', 'cursor-agent', 'agent'];
+
+test('whitelist matches the command name', () => {
+  assert.equal(commandAllowsNotification('claude', AGENTS), true);
+  assert.equal(commandAllowsNotification('ls', AGENTS), false);
+});
+
+test('whitelist ignores arguments and the executable path', () => {
+  assert.equal(commandAllowsNotification('claude --resume', AGENTS), true);
+  assert.equal(commandAllowsNotification('/usr/local/bin/claude --resume', AGENTS), true);
+  assert.equal(commandAllowsNotification('  make   build  ', ['make']), true);
+  assert.equal(commandAllowsNotification('make build', AGENTS), false);
+});
+
+test('an empty whitelist disables the restriction', () => {
+  assert.equal(commandAllowsNotification('ls', []), true);
+  assert.equal(commandAllowsNotification('', []), true);
+  assert.equal(commandAllowsNotification(undefined, []), true);
+});
+
+test('an unknown command is not allowed while a whitelist is set', () => {
+  assert.equal(commandAllowsNotification('', AGENTS), false);
+  assert.equal(commandAllowsNotification('   ', AGENTS), false);
+  assert.equal(commandAllowsNotification(undefined, AGENTS), false);
+});
+
+test('whitelist entries are trimmed and matched exactly', () => {
+  assert.equal(commandAllowsNotification('claude', [' claude ']), true);
+  assert.equal(commandAllowsNotification('claude', ['clau']), false);
+  assert.equal(commandAllowsNotification('claude', ['Claude']), false);
 });

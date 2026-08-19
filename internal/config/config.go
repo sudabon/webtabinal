@@ -20,6 +20,16 @@ type NotificationConfig struct {
 	Always        bool `json:"always"`
 	MinDurationMs int  `json:"min_duration_ms"`
 	Sound         bool `json:"sound"`
+	// Commands whitelists the session commands that may raise a desktop
+	// banner. Matching uses the basename of the command's first token. An
+	// empty list disables the restriction; notification.enabled turns
+	// everything off.
+	Commands []string `json:"commands"`
+}
+
+// DefaultNotifyCommands is the bundled coding-agent command set.
+func DefaultNotifyCommands() []string {
+	return []string{"claude", "codex", "cursor-agent", "agent"}
 }
 
 type StateConfig struct {
@@ -28,16 +38,7 @@ type StateConfig struct {
 	QuiescenceMs    int    `json:"quiescence_ms"`
 	BottomLines     int    `json:"bottom_lines"`
 	NotifyOnBlocked bool   `json:"notify_on_blocked"`
-	// NotifyAgents holds the manifest IDs whose agent-attention notifications
-	// may raise a banner. An empty list permits every identified agent while
-	// still excluding the generic manifest and unidentified sessions.
-	NotifyAgents []string `json:"notify_agents"`
-	ManifestDir  string   `json:"manifest_dir"`
-}
-
-// DefaultNotifyAgents is the bundled coding-agent manifest set.
-func DefaultNotifyAgents() []string {
-	return []string{"claude", "codex", "cursor-agent"}
+	ManifestDir     string `json:"manifest_dir"`
 }
 
 type KeyBindingsConfig struct {
@@ -89,6 +90,7 @@ func Defaults() Config {
 			Always:        false,
 			MinDurationMs: 0,
 			Sound:         false,
+			Commands:      DefaultNotifyCommands(),
 		},
 		State: StateConfig{
 			Enabled:         true,
@@ -96,7 +98,6 @@ func Defaults() Config {
 			QuiescenceMs:    1500,
 			BottomLines:     15,
 			NotifyOnBlocked: true,
-			NotifyAgents:    DefaultNotifyAgents(),
 			ManifestDir:     "",
 		},
 		ConfirmCloseRunning: true,
@@ -210,11 +211,11 @@ func (s *Store) applyDefaults() {
 	}
 	// A missing key unmarshals to nil, while an explicit [] unmarshals to an
 	// empty non-nil slice. Only the former gets the default list.
-	if s.cfg.State.NotifyAgents == nil {
-		s.cfg.State.NotifyAgents = d.State.NotifyAgents
+	if s.cfg.Notification.Commands == nil {
+		s.cfg.Notification.Commands = d.Notification.Commands
 	} else {
-		for i, id := range s.cfg.State.NotifyAgents {
-			s.cfg.State.NotifyAgents[i] = strings.TrimSpace(id)
+		for i, name := range s.cfg.Notification.Commands {
+			s.cfg.Notification.Commands[i] = strings.TrimSpace(name)
 		}
 	}
 }
@@ -222,8 +223,8 @@ func (s *Store) applyDefaults() {
 // clone returns a Config whose slice fields do not share storage with the
 // receiver, so callers and json.Unmarshal cannot write through into it.
 func (c Config) clone() Config {
-	if c.State.NotifyAgents != nil {
-		c.State.NotifyAgents = append([]string(nil), c.State.NotifyAgents...)
+	if c.Notification.Commands != nil {
+		c.Notification.Commands = append([]string(nil), c.Notification.Commands...)
 	}
 	return c
 }
@@ -312,6 +313,11 @@ func validate(cfg Config) error {
 	if cfg.Notification.MinDurationMs < 0 {
 		return fmt.Errorf("notification.min_duration_ms must be non-negative")
 	}
+	for _, name := range cfg.Notification.Commands {
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("notification.commands entries must not be blank")
+		}
+	}
 	if err := validateKeyBindings(cfg.KeyBindings); err != nil {
 		return err
 	}
@@ -330,11 +336,6 @@ func validateState(s StateConfig) error {
 	}
 	if s.BottomLines < 1 || s.BottomLines > 200 {
 		return fmt.Errorf("state.bottom_lines must be between 1 and 200")
-	}
-	for _, id := range s.NotifyAgents {
-		if strings.TrimSpace(id) == "" {
-			return fmt.Errorf("state.notify_agents entries must not be blank")
-		}
 	}
 	if s.ManifestDir != "" && !filepath.IsAbs(s.ManifestDir) {
 		return fmt.Errorf("state.manifest_dir must be empty or an absolute path")

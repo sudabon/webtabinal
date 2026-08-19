@@ -1,55 +1,52 @@
 ## ADDED Requirements
 
-### Requirement: Agent-attention notifications are limited to configured agents
+### Requirement: Desktop notifications are limited to whitelisted commands
 
-The daemon SHALL restrict agent-attention notification banners to sessions whose detected agent is permitted by `state.notify_agents`. The setting SHALL hold manifest IDs. A non-empty list SHALL permit only the listed IDs. An empty list SHALL permit every identified agent while still excluding the generic manifest and unidentified sessions. When `state.enabled` is false the restriction SHALL NOT apply and every agent-attention event SHALL stay eligible.
+Every desktop notification SHALL be raised only when the session's command is permitted by `notification.commands`. This applies uniformly to command completion, OSC wait, screen-derived `blocked`, and prompt-return notifications, so a single list determines which sessions can produce a banner.
 
-A restricted event SHALL still be delivered to clients so the session is marked unread, but SHALL NOT raise a platform notification banner. Restriction SHALL NOT affect agent state transitions, the state pill, or command-completion notifications.
+A command SHALL be permitted when the basename of the first whitespace-separated token of the session's command equals an entry in the list. An empty list SHALL disable the restriction so every session may notify. Suppressing all notifications SHALL remain the job of `notification.enabled`.
 
-#### Scenario: Unidentified session does not raise a banner
+A restricted event SHALL still mark the session unread and update the Dock badge, so nothing is lost when the banner is withheld.
 
-- **WHEN** a session with no detected agent emits OSC 9 and `state.enabled` is true
-- **THEN** no platform notification banner is requested and the session is still marked unread
+#### Scenario: Whitelisted command notifies on completion
 
-#### Scenario: Generic TUI does not raise a banner
+- **WHEN** `notification.commands` contains `make`, a session runs `make build`, and the completion is otherwise eligible
+- **THEN** one platform notification is requested
 
-- **WHEN** a session detected as the generic manifest emits OSC 777 and `state.notify_agents` is empty
-- **THEN** no platform notification banner is requested and the session is still marked unread
+#### Scenario: Unlisted command does not notify on completion
 
-#### Scenario: Listed agent raises a banner
+- **WHEN** `notification.commands` is `["claude"]` and a session runs `ls` to completion while notifications are enabled and `notification.always` is true
+- **THEN** no platform notification is requested and the tab is still marked unread if it is not active
 
-- **WHEN** a session detected as `claude` emits OSC 9 and `state.notify_agents` contains `claude`
-- **THEN** one platform notification banner is requested
+#### Scenario: Path and arguments are ignored when matching
 
-#### Scenario: Unlisted agent does not raise a banner
+- **WHEN** `notification.commands` contains `claude` and a session runs `/usr/local/bin/claude --resume`
+- **THEN** the command is permitted
 
-- **WHEN** a session detected as `codex` becomes `blocked` and `state.notify_agents` is `["claude"]`
-- **THEN** no platform notification banner is requested and the session is still marked unread
+#### Scenario: Unlisted command does not notify on agent events
 
-#### Scenario: Empty list permits any identified agent
+- **WHEN** `notification.commands` is `["claude"]` and a session running `codex` emits OSC 9 or enters `blocked`
+- **THEN** no platform notification is requested and the tab is still marked unread if it is not active
 
-- **WHEN** a session detected as a locally installed manifest becomes `blocked` and `state.notify_agents` is empty
-- **THEN** one platform notification banner is requested
+#### Scenario: Empty list disables the restriction
 
-#### Scenario: Disabled detection ignores the allow list
+- **WHEN** `notification.commands` is empty and any session produces an eligible notification event
+- **THEN** the notification is raised as it would have been without the list
 
-- **WHEN** `state.enabled` is false and any session emits OSC 9 while `state.notify_agents` is `["claude"]`
-- **THEN** the OSC notification remains eligible and one platform notification banner is requested
+#### Scenario: Unknown command does not notify
 
-#### Scenario: Command completion is unaffected
-
-- **WHEN** a command completes on a session with no detected agent and completion notifications are eligible
-- **THEN** the command-completion notification is delivered as before
+- **WHEN** a session has no known command and produces an eligible notification event while `notification.commands` is non-empty
+- **THEN** no platform notification is requested
 
 ### Requirement: Notify on agent prompt return
 
-When agent state changes from `working` to `idle`, the system SHALL create an agent-attention notification event if `notification.enabled` is true and the agent is permitted by `state.notify_agents`. This event represents the agent returning its prompt at the end of a turn. It SHALL reuse the existing platform notification provider, unread-mark, activation, and `notification.always` behavior, and SHALL NOT be suppressed by `notification.min_duration_ms`. Its title SHALL be the agent display name and its body SHALL state that the agent is ready for input.
+When agent state changes from `working` to `idle`, the system SHALL create an agent-attention notification event if `notification.enabled` is true. This event represents the agent returning its prompt at the end of a turn. It SHALL reuse the existing platform notification provider, unread-mark, activation, `notification.always`, and command-whitelist behavior, and SHALL NOT be suppressed by `notification.min_duration_ms`. Its title SHALL be the agent display name and its body SHALL state that the agent is ready for input.
 
 Transitions into `idle` from `none` or from `blocked` SHALL NOT create this event, because the first is a session's initial idle-safe resolution and the second follows a user response that has just occurred.
 
 #### Scenario: Background turn completion notifies
 
-- **WHEN** a background session detected as `cursor-agent` changes from `working` to `idle` and `cursor-agent` is permitted
+- **WHEN** a background session running a whitelisted `cursor-agent` changes from `working` to `idle`
 - **THEN** the session is marked unread and one platform notification is requested
 
 #### Scenario: Session start does not notify
@@ -98,13 +95,32 @@ The daemon SHALL NOT treat `OSC 9;4;…` progress reports or `OSC 9;9;…` worki
 
 ## MODIFIED Requirements
 
+### Requirement: Notify on command completion
+When a command completes (`OSC 133;D` or fallback running→idle), the system SHALL raise a desktop notification if notifications are enabled, the session's command is permitted by `notification.commands`, and the event passes the suppression and duration rules. Default suppression: do not notify when the completing tab is active AND the app window is focused, unless `notification.always` is true. Completions shorter than `notification.min_duration_ms` SHALL be skipped. Notification title SHALL use ✓ or ✗ with the command; body SHALL include directory basename and duration. Click SHALL focus the window and switch to that tab. Sound SHALL NOT play in v0.1 (`sound` key reserved).
+
+#### Scenario: Background completion notifies
+- **WHEN** a whitelisted command completes on a non-active tab (or the window is unfocused) and notifications are enabled
+- **THEN** a macOS notification is shown with command and duration
+
+#### Scenario: Active focused completion is suppressed by default
+- **WHEN** a command completes on the active tab while the window is focused and `notification.always` is false
+- **THEN** no desktop notification is shown
+
+#### Scenario: Short commands respect min duration
+- **WHEN** `notification.min_duration_ms` is 5000 and a command finishes in 1s
+- **THEN** no notification is emitted for that completion
+
+#### Scenario: Unlisted command is suppressed regardless of duration
+- **WHEN** `notification.min_duration_ms` is 0, `notification.always` is true, and a session runs a command that is not in `notification.commands`
+- **THEN** no desktop notification is shown
+
 ### Requirement: Notify on agent wait OSC
 
-When the daemon reports an OSC 9, OSC 99, or OSC 777 notify event, the client SHALL raise a desktop notification if notifications are enabled, the event is not banner-suppressed by the configured agent allow list, and the event passes the same default suppression as command completion: do not notify when the tab is active AND the app window is focused, unless `notification.always` is true. `notification.min_duration_ms` SHALL NOT skip agent-wait notifications. Notification title and body SHALL come from the OSC payload (title MAY fall back to the session command or `WebTabinal`). Click SHALL focus the window and switch to that tab. Sound SHALL NOT play (`sound` key reserved).
+When the daemon reports an OSC 9, OSC 99, or OSC 777 notify event, the client SHALL raise a desktop notification if notifications are enabled, the session's command is permitted by `notification.commands`, and the event passes the same default suppression as command completion: do not notify when the tab is active AND the app window is focused, unless `notification.always` is true. `notification.min_duration_ms` SHALL NOT skip agent-wait notifications. Notification title and body SHALL come from the OSC payload (title MAY fall back to the session command or `WebTabinal`). Click SHALL focus the window and switch to that tab. Sound SHALL NOT play (`sound` key reserved).
 
 #### Scenario: Background wait notifies
 
-- **WHEN** an OSC notify arrives for a non-active tab of a permitted agent (or the window is unfocused) and notifications are enabled
+- **WHEN** an OSC notify arrives for a non-active tab running a whitelisted command (or the window is unfocused) and notifications are enabled
 - **THEN** a macOS notification is shown with the OSC title and body
 
 #### Scenario: Active focused wait is suppressed by default
@@ -117,31 +133,26 @@ When the daemon reports an OSC 9, OSC 99, or OSC 777 notify event, the client SH
 - **WHEN** `notification.min_duration_ms` is 5000 and an OSC notify arrives 1s after the command started
 - **THEN** the wait notification is still emitted (subject to focus suppression)
 
-#### Scenario: Banner-suppressed wait shows no notification
-
-- **WHEN** an OSC notify arrives for a session whose agent is not permitted by `state.notify_agents`
-- **THEN** no desktop notification is shown
-
 ### Requirement: Unread mark on agent wait
 
-A wait notification on a non-active tab SHALL mark that tab unread and increment the Dock badge, using the same clear-on-activate behavior as completion unread marks. This SHALL apply whether the notification was shown, suppressed by focus rules, or banner-suppressed by the configured agent allow list.
+A wait notification on a non-active tab SHALL mark that tab unread and increment the Dock badge, using the same clear-on-activate behavior as completion unread marks. This SHALL apply whether the notification was shown, suppressed by focus rules, or suppressed by the command whitelist.
 
 #### Scenario: Background wait marks unread
 
 - **WHEN** an OSC notify arrives for a non-active tab
 - **THEN** that tab shows an unread dot and the Dock badge count increases by one if it was not already unread
 
-#### Scenario: Banner-suppressed wait still marks unread
+#### Scenario: Whitelist-suppressed wait still marks unread
 
-- **WHEN** an OSC notify arrives for a non-active tab whose agent is not permitted by `state.notify_agents`
+- **WHEN** an OSC notify arrives for a non-active tab whose command is not in `notification.commands`
 - **THEN** that tab shows an unread dot and no desktop notification is shown
 
 ### Requirement: Notify on agent blocked transition
 
-When agent state changes from any non-blocked state to `blocked`, the system SHALL create an agent-attention notification event if `state.notify_on_blocked` and `notification.enabled` are true. The event SHALL use the existing platform notification provider and unread-mark behavior, SHALL obey `notification.always`, and SHALL NOT be suppressed by `notification.min_duration_ms`. The banner SHALL be raised only when the detected agent is permitted by `state.notify_agents`.
+When agent state changes from any non-blocked state to `blocked`, the system SHALL create an agent-attention notification event if `state.notify_on_blocked` and `notification.enabled` are true. The event SHALL use the existing platform notification provider and unread-mark behavior, SHALL obey `notification.always` and `notification.commands`, and SHALL NOT be suppressed by `notification.min_duration_ms`.
 
 #### Scenario: Background blocked state notifies
-- **WHEN** a background session with a permitted agent changes from `working` to `blocked` with blocked notifications enabled
+- **WHEN** a background session running a whitelisted command changes from `working` to `blocked` with blocked notifications enabled
 - **THEN** the session is marked unread and one platform notification is requested
 
 #### Scenario: Active focused blocked state respects always
@@ -163,10 +174,6 @@ When agent state changes from any non-blocked state to `blocked`, the system SHA
 #### Scenario: Blocked notifications can be disabled independently
 - **WHEN** `state.notify_on_blocked` is false and agent state changes to `blocked`
 - **THEN** the pill and state transport update but no screen-derived notification event is created
-
-#### Scenario: Unpermitted agent blocked state shows no banner
-- **WHEN** a session whose agent is not permitted by `state.notify_agents` becomes `blocked`
-- **THEN** the session is marked unread and no platform banner is requested
 
 ### Requirement: Agent attention notifications are deduplicated across signals
 
@@ -191,19 +198,3 @@ The daemon SHALL deduplicate OSC 9, OSC 99, OSC 777, screen-derived blocked, and
 #### Scenario: Later attention event can notify
 - **WHEN** a session produces another eligible agent-attention event after the four-second window
 - **THEN** the later event is not suppressed by the earlier timestamp
-
-### Requirement: Disabling state detection preserves OSC notifications
-
-When `state.enabled` changes to false, the system SHALL stop screen-derived state evaluation, blocked notifications, and prompt-return notifications, reset live agent states to `none`, and continue parsing and delivering existing OSC notifications without applying the `state.notify_agents` allow list.
-
-#### Scenario: Disable clears a visible state
-- **WHEN** state detection is disabled while a session is `blocked`
-- **THEN** clients receive an agent state update to `none` and no further screen-derived blocked notifications occur
-
-#### Scenario: OSC remains active while detection is disabled
-- **WHEN** a session emits OSC 9 while `state.enabled` is false and notifications are otherwise eligible
-- **THEN** the existing OSC wait notification is still delivered
-
-#### Scenario: Re-enable evaluates live sessions
-- **WHEN** state detection is re-enabled while sessions remain live
-- **THEN** the daemon evaluates their current observations and broadcasts any newly detected agent states

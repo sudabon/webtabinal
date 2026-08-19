@@ -75,14 +75,13 @@ function appConfig(colorScheme: ColorScheme, keyBindings: KeyBindings = DEFAULT_
     font_size: 14,
     sidebar_width: 240,
     color_scheme: colorScheme,
-    notification: { enabled: false, always: false, min_duration_ms: 0, sound: false },
+    notification: { enabled: false, always: false, min_duration_ms: 0, sound: false, commands: [] },
     state: {
       enabled: true,
       debounce_ms: 120,
       quiescence_ms: 1500,
       bottom_lines: 15,
       notify_on_blocked: true,
-      notify_agents: ['claude', 'codex', 'cursor-agent'],
       manifest_dir: '',
     },
     confirm_close_running: true,
@@ -702,11 +701,12 @@ test('missing notification permission keeps unread state and native activation s
   assert.equal(view.focusSeq, 1, 'activation must use the normal selection path and restore terminal focus');
 });
 
-test('banner-suppressed notify marks the tab unread without raising a notification', async (t) => {
+test('notification.commands gates banners for both completion and agent events', async (t) => {
   const hooks = new HookHarness();
   const cfg = appConfig('system');
   cfg.notification.enabled = true;
   cfg.notification.always = true;
+  cfg.notification.commands = ['claude'];
   const api = {
     getConfig: async () => cfg,
     patchConfig: async (patch: Partial<AppConfig>) => ({ ...cfg, ...patch }),
@@ -759,33 +759,48 @@ test('banner-suppressed notify marks the tab unread without raising a notificati
   render();
 
   const { socketOptions } = harness();
+
+  // Completion of an unlisted command: unread only, no banner.
   socketOptions.onMessage({
-    t: 'notify',
-    sid: 'b',
-    title: 'make',
-    body: 'build finished',
-    banner: false,
+    t: 'state', sid: 'b', cwd: '/tmp', cmd: 'ls', state: 'running', exit: null, integrated: true, run_ms: 0,
+  });
+  socketOptions.onMessage({
+    t: 'state', sid: 'b', cwd: '/tmp', cmd: 'ls', state: 'idle', exit: 0, integrated: true, run_ms: 8,
   });
   await new Promise(setImmediate);
+  assert.equal(render().unread.has('b'), true, 'an unlisted completion must still mark the tab unread');
+  assert.deepEqual(harness().shown, [], '`ls` must not raise a banner');
 
-  assert.equal(render().unread.has('b'), true, 'a banner-suppressed event must still mark the tab unread');
-  assert.deepEqual(harness().shown, [], 'a banner-suppressed event must not raise a notification');
-
+  // Completion of a listed command: banner.
   socketOptions.onMessage({
-    t: 'notify',
-    sid: 'c',
-    title: 'Codex',
-    body: 'Ready for input',
-    kind: 'agent_idle',
-    source: 'screen',
+    t: 'state', sid: 'c', cwd: '/tmp', cmd: 'claude', state: 'running', exit: null, integrated: true, run_ms: 0,
+  });
+  socketOptions.onMessage({
+    t: 'state', sid: 'c', cwd: '/tmp', cmd: 'claude', state: 'idle', exit: 0, integrated: true, run_ms: 12,
   });
   await new Promise(setImmediate);
+  assert.equal(harness().shown.length, 1, 'a listed completion must raise a banner');
+  assert.equal(harness().shown[0].sid, 'c');
 
-  assert.equal(render().unread.has('c'), true);
+  // Re-render so the session list ref sees the commands the state frames set;
+  // the real app re-renders on setSessions before any later notify frame.
+  render();
+
+  // Agent notify frame on the unlisted session: unread only.
+  socketOptions.onMessage({
+    t: 'notify', sid: 'b', title: 'make', body: 'build finished',
+  });
+  await new Promise(setImmediate);
+  assert.equal(harness().shown.length, 1, 'an unlisted session must not raise a banner from a notify frame');
+
+  // Agent notify frame on the listed session: banner.
+  socketOptions.onMessage({
+    t: 'notify', sid: 'c', title: 'Claude Code', body: 'Ready for input', kind: 'agent_idle', source: 'screen',
+  });
+  await new Promise(setImmediate);
   assert.deepEqual(
-    harness().shown.map((request) => [request.sid, request.title, request.body]),
-    [['c', 'Codex', 'Ready for input']],
-    'a frame without the banner flag notifies as before',
+    harness().shown.map((r) => [r.sid, r.title, r.body]).slice(1),
+    [['c', 'Claude Code', 'Ready for input']],
   );
 });
 
