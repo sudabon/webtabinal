@@ -75,13 +75,14 @@ function appConfig(colorScheme: ColorScheme, keyBindings: KeyBindings = DEFAULT_
     font_size: 14,
     sidebar_width: 240,
     color_scheme: colorScheme,
-    notification: { enabled: false, always: false, min_duration_ms: 0, sound: false },
+    notification: { enabled: false, always: false, min_duration_ms: 0, sound: false, commands: [] },
     state: {
       enabled: true,
       debounce_ms: 120,
       quiescence_ms: 1500,
       bottom_lines: 15,
       notify_on_blocked: true,
+      notify_on_idle: false,
       manifest_dir: '',
     },
     confirm_close_running: true,
@@ -111,6 +112,21 @@ function mockModules(hooks: HookHarness, api: object, emitSessions = false): Plu
     ['./components/Sidebar', 'export function Sidebar() {}'],
     ['./components/TabMemoModal', 'export function TabMemoModal() {}'],
     ['./components/TerminalView', 'export function TerminalView() {}'],
+    ['./notification-provider', `
+      export const NATIVE_NOTIFICATION_ACTIVATION_EVENT = 'webtabinal-native-notification-activated';
+      export function createNotificationProvider() {
+        return {
+          async show(request) {
+            const harness = globalThis.__webtabinalAppTest;
+            // A provider without permission requests no OS notification.
+            if (harness.notificationPermission !== 'granted') return;
+            harness.shown.push(request);
+          },
+          async permission() { return globalThis.__webtabinalAppTest.notificationPermission; },
+          async requestPermission() { return globalThis.__webtabinalAppTest.notificationPermission; },
+        };
+      }
+    `],
     ['./theme', 'export function useColorScheme() { return {}; }'],
     ['./util', `
       export function cwdBasename(value) { return value; }
@@ -142,7 +158,9 @@ function mockModules(hooks: HookHarness, api: object, emitSessions = false): Plu
     `],
   ]);
 
-  Object.assign(globalThis, { __webtabinalAppTest: { hooks, api } });
+  Object.assign(globalThis, {
+    __webtabinalAppTest: { hooks, api, shown: [], notificationPermission: 'granted' },
+  });
 
   return {
     name: 'webtabinal-app-test-mocks',
@@ -158,6 +176,16 @@ function mockModules(hooks: HookHarness, api: object, emitSessions = false): Plu
       return modules.get(source);
     },
   };
+}
+
+type NotifyHarness = {
+  shown: Array<{ sid: string; title: string; body: string }>;
+  notificationPermission: string;
+  socketOptions: { onMessage: (message: unknown) => void };
+};
+
+function harness(): NotifyHarness {
+  return (globalThis as typeof globalThis & { __webtabinalAppTest: NotifyHarness }).__webtabinalAppTest;
 }
 
 test('latest failed color scheme change rolls back to the server-confirmed scheme', async (t) => {
@@ -603,6 +631,7 @@ test('missing notification permission keeps unread state and native activation s
   t.after(async () => {
     await server.close();
   });
+  harness().notificationPermission = 'denied';
 
   Object.assign(globalThis, {
     document: { hasFocus: () => true, title: '', activeElement: null },
@@ -671,6 +700,109 @@ test('missing notification permission keeps unread state and native activation s
   assert.equal(view.activeId, 'b');
   assert.equal(view.unread.has('b'), false);
   assert.equal(view.focusSeq, 1, 'activation must use the normal selection path and restore terminal focus');
+});
+
+test('notification.commands gates banners for both completion and agent events', async (t) => {
+  const hooks = new HookHarness();
+  const cfg = appConfig('system');
+  cfg.notification.enabled = true;
+  cfg.notification.always = true;
+  cfg.notification.commands = ['claude'];
+  const api = {
+    getConfig: async () => cfg,
+    patchConfig: async (patch: Partial<AppConfig>) => ({ ...cfg, ...patch }),
+  };
+  const server = await createServer({
+    configFile: false,
+    logLevel: 'silent',
+    plugins: [mockModules(hooks, api, true), react()],
+    resolve: {
+      alias: [
+        { find: /^react$/, replacement: fileURLToPath(new URL('./app-react-mock.ts', import.meta.url)) },
+        { find: /^react\/jsx-dev-runtime$/, replacement: fileURLToPath(new URL('./app-react-mock.ts', import.meta.url)) },
+        { find: /^react\/jsx-runtime$/, replacement: fileURLToPath(new URL('./app-react-mock.ts', import.meta.url)) },
+      ],
+    },
+    server: { middlewareMode: true },
+  });
+  t.after(async () => {
+    await server.close();
+  });
+
+  Object.assign(globalThis, {
+    document: { hasFocus: () => true, title: '', activeElement: null },
+    window: {
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => true,
+      setTimeout,
+      clearTimeout,
+      close: () => {},
+      focus: () => {},
+    },
+  });
+
+  const { default: App } = await server.ssrLoadModule('/src/App.tsx') as {
+    default: () => { props: { children: Array<{ props?: Record<string, unknown> } | false | null> } };
+  };
+  const render = () => {
+    hooks.beginRender();
+    const tree = App();
+    const children = (tree.props.children as Array<{ props?: Record<string, unknown> } | false | null>)
+      .filter((child): child is { props: Record<string, unknown> } => !!child && typeof child === 'object' && !!child.props);
+    const sidebar = children.find((child) => 'sessions' in child.props);
+    return { unread: sidebar?.props.unread as Set<string> };
+  };
+
+  render();
+  for (const effect of hooks.effects) effect();
+  await new Promise(setImmediate);
+  render();
+
+  const { socketOptions } = harness();
+
+  // Completion of an unlisted command: unread only, no banner.
+  socketOptions.onMessage({
+    t: 'state', sid: 'b', cwd: '/tmp', cmd: 'ls', state: 'running', exit: null, integrated: true, run_ms: 0,
+  });
+  socketOptions.onMessage({
+    t: 'state', sid: 'b', cwd: '/tmp', cmd: 'ls', state: 'idle', exit: 0, integrated: true, run_ms: 8,
+  });
+  await new Promise(setImmediate);
+  assert.equal(render().unread.has('b'), true, 'an unlisted completion must still mark the tab unread');
+  assert.deepEqual(harness().shown, [], '`ls` must not raise a banner');
+
+  // Completion of a listed command: banner.
+  socketOptions.onMessage({
+    t: 'state', sid: 'c', cwd: '/tmp', cmd: 'claude', state: 'running', exit: null, integrated: true, run_ms: 0,
+  });
+  socketOptions.onMessage({
+    t: 'state', sid: 'c', cwd: '/tmp', cmd: 'claude', state: 'idle', exit: 0, integrated: true, run_ms: 12,
+  });
+  await new Promise(setImmediate);
+  assert.equal(harness().shown.length, 1, 'a listed completion must raise a banner');
+  assert.equal(harness().shown[0].sid, 'c');
+
+  // Re-render so the session list ref sees the commands the state frames set;
+  // the real app re-renders on setSessions before any later notify frame.
+  render();
+
+  // Agent notify frame on the unlisted session: unread only.
+  socketOptions.onMessage({
+    t: 'notify', sid: 'b', title: 'make', body: 'build finished',
+  });
+  await new Promise(setImmediate);
+  assert.equal(harness().shown.length, 1, 'an unlisted session must not raise a banner from a notify frame');
+
+  // Agent notify frame on the listed session: banner.
+  socketOptions.onMessage({
+    t: 'notify', sid: 'c', title: 'Claude Code', body: 'Ready for input', kind: 'agent_idle', source: 'screen',
+  });
+  await new Promise(setImmediate);
+  assert.deepEqual(
+    harness().shown.map((r) => [r.sid, r.title, r.body]).slice(1),
+    [['c', 'Claude Code', 'Ready for input']],
+  );
 });
 
 test('agent_state frames update pills without replacing shell state or dropping unread', async (t) => {

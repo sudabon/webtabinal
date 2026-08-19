@@ -181,3 +181,31 @@ func (s *Server) logSnapshot(sessionID string, status int) {
 	}
 	s.logger.Printf("state-snapshot session=%s status=%d", sessionID, status)
 }
+
+// handleSessionNotify accepts a turn-completion report from a coding agent's
+// stop hook. A hook cannot reach the terminal, so this is the only path by
+// which an agent's own account of its turn ending gets into the session.
+func (s *Server) handleSessionNotify(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var body struct {
+		Title string `json:"title"`
+		Body  string `json:"body"`
+		Kind  string `json:"kind"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(body.Title) == "" && strings.TrimSpace(body.Body) == "" {
+		http.Error(w, "title or body is required", http.StatusBadRequest)
+		return
+	}
+	kind := strings.TrimSpace(body.Kind)
+	if kind == "" {
+		kind = notifyKindAgentIdle
+	}
+	if s.hub != nil {
+		s.hub.notifyFromHook(id, body.Title, body.Body, kind)
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

@@ -39,6 +39,8 @@ export type NotificationConfig = {
   always: boolean;
   min_duration_ms: number;
   sound: boolean;
+  // Session commands allowed to raise a banner. Empty disables the restriction.
+  commands: string[];
 };
 
 export type StateConfig = {
@@ -47,6 +49,9 @@ export type StateConfig = {
   quiescence_ms: number;
   bottom_lines: number;
   notify_on_blocked: boolean;
+  // Screen-derived prompt return. Off by default; a stop hook reports the same
+  // thing without mistaking a thinking pause for a finished turn.
+  notify_on_idle: boolean;
   manifest_dir: string;
 };
 
@@ -86,7 +91,14 @@ export type ServerMsg =
       agent_state_signal: AgentStateSignal | string;
       agent_state_detail?: string;
     }
-  | { t: 'notify'; sid: string; title: string; body: string; kind?: string; source?: string }
+  | {
+      t: 'notify';
+      sid: string;
+      title: string;
+      body: string;
+      kind?: string;
+      source?: string;
+    }
   | { t: 'output'; sid: string; data: string }
   | { t: 'replay'; sid: string; data: string; done: boolean }
   | { t: 'error'; sid?: string; code?: string; message: string };

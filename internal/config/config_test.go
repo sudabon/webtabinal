@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -318,11 +319,133 @@ func TestStateConfigDefaults(t *testing.T) {
 	if !got.Enabled || got.DebounceMs != 120 || got.QuiescenceMs != 1500 || got.BottomLines != 15 || !got.NotifyOnBlocked || got.ManifestDir != "" {
 		t.Fatalf("Defaults().State = %+v", got)
 	}
+	// Screen quiescence cannot tell a finished turn from a thinking pause, so
+	// the prompt-return notification stays off until asked for.
+	if got.NotifyOnIdle {
+		t.Fatalf("Defaults().State.NotifyOnIdle = true, want false")
+	}
 
 	store := newTestStore(t)
 	stored := store.Public().State
-	if stored != got {
+	if !reflect.DeepEqual(stored, got) {
 		t.Fatalf("first-launch state = %+v, want %+v", stored, got)
+	}
+}
+
+func TestNotificationCommandsDefaults(t *testing.T) {
+	want := []string{"claude", "codex", "cursor-agent", "agent"}
+	if got := Defaults().Notification.Commands; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Defaults().Notification.Commands = %v, want %v", got, want)
+	}
+	if got := newTestStore(t).Public().Notification.Commands; !reflect.DeepEqual(got, want) {
+		t.Fatalf("first-launch commands = %v, want %v", got, want)
+	}
+}
+
+func TestOlderConfigGainsNotificationCommandsDefault(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	support := filepath.Join(home, "Library", "Application Support", "WebTabinal")
+	if err := os.MkdirAll(support, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"notification":{"enabled":true,"always":true,"min_duration_ms":4000,"sound":true}}`
+	if err := os.WriteFile(filepath.Join(support, "config.json"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := LoadOrCreate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := store.Public().Notification
+	if want := []string{"claude", "codex", "cursor-agent", "agent"}; !reflect.DeepEqual(got.Commands, want) {
+		t.Fatalf("migrated commands = %v, want %v", got.Commands, want)
+	}
+	if !got.Always || got.MinDurationMs != 4000 || !got.Sound {
+		t.Fatalf("other stored notification values changed: %+v", got)
+	}
+}
+
+func TestExplicitEmptyNotificationCommandsIsPreserved(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	support := filepath.Join(home, "Library", "Application Support", "WebTabinal")
+	if err := os.MkdirAll(support, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(support, "config.json"), []byte(`{"notification":{"commands":[]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := LoadOrCreate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := store.Public().Notification.Commands; len(got) != 0 {
+		t.Fatalf("explicit empty commands = %v, want empty", got)
+	}
+}
+
+func TestPatchNotificationCommands(t *testing.T) {
+	store := newTestStore(t)
+
+	got, err := store.Patch(map[string]any{"notification": map[string]any{"commands": []any{" claude ", "make"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"claude", "make"}; !reflect.DeepEqual(got.Notification.Commands, want) {
+		t.Fatalf("commands = %v, want %v", got.Notification.Commands, want)
+	}
+
+	got, err = store.Patch(map[string]any{"notification": map[string]any{"commands": []any{}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Notification.Commands) != 0 {
+		t.Fatalf("commands = %v, want empty", got.Notification.Commands)
+	}
+}
+
+func TestPatchRejectsBlankNotificationCommand(t *testing.T) {
+	store := newTestStore(t)
+	before := store.Public()
+
+	for _, entry := range []string{"", "   "} {
+		if _, err := store.Patch(map[string]any{"notification": map[string]any{"commands": []any{"claude", entry}}}); err == nil {
+			t.Fatalf("Patch(%q) returned nil error", entry)
+		}
+		if got := store.Public(); !reflect.DeepEqual(got, before) {
+			t.Fatalf("stored config changed after rejection: %+v", got.Notification)
+		}
+	}
+}
+
+// A rejected patch must not write through the stored slice's backing array,
+// which encoding/json reuses when the replacement fits in existing capacity.
+func TestRejectedCommandsPatchDoesNotAliasStoredSlice(t *testing.T) {
+	store := newTestStore(t)
+	before := store.Public()
+
+	if _, err := store.Patch(map[string]any{
+		"notification": map[string]any{"commands": []any{"", "codex", "cursor-agent", "agent"}},
+	}); err == nil {
+		t.Fatal("Patch returned nil error")
+	}
+	if got := store.Public(); !reflect.DeepEqual(got, before) {
+		t.Fatalf("stored config changed after rejection: %v, want %v", got.Notification.Commands, before.Notification.Commands)
+	}
+}
+
+func TestGetDoesNotShareNotificationCommandsBacking(t *testing.T) {
+	store := newTestStore(t)
+	got := store.Get()
+	if len(got.Notification.Commands) == 0 {
+		t.Fatal("expected default notification commands")
+	}
+	got.Notification.Commands[0] = "mutated"
+	if store.Get().Notification.Commands[0] == "mutated" {
+		t.Fatal("caller mutation leaked into stored config")
 	}
 }
 
@@ -349,7 +472,7 @@ func TestOlderConfigGainsAgentStateDefaults(t *testing.T) {
 		t.Fatalf("unrelated notification changed: %+v", got.Notification)
 	}
 	d := Defaults().State
-	if got.State != d {
+	if !reflect.DeepEqual(got.State, d) {
 		t.Fatalf("migrated state = %+v, want %+v", got.State, d)
 	}
 }
@@ -414,7 +537,7 @@ func TestPatchRejectsInvalidState(t *testing.T) {
 			if _, err := store.Patch(map[string]any{"state": body}); err == nil {
 				t.Fatal("Patch returned nil error")
 			}
-			if got := store.Public(); got != before {
+			if got := store.Public(); !reflect.DeepEqual(got, before) {
 				t.Fatalf("stored config changed after rejection: %+v", got)
 			}
 		})
@@ -487,5 +610,70 @@ func TestShiftEnterNewlineCanBeTurnedOff(t *testing.T) {
 	}
 	if store.Get().ShiftEnterNewline {
 		t.Fatal("store kept ShiftEnterNewline = true after patching it off")
+	}
+}
+
+func TestOlderConfigDefaultsNotifyOnIdleToOff(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	support := filepath.Join(home, "Library", "Application Support", "WebTabinal")
+	if err := os.MkdirAll(support, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"state":{"enabled":true,"notify_on_blocked":false,"bottom_lines":20}}`
+	if err := os.WriteFile(filepath.Join(support, "config.json"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := LoadOrCreate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := store.Public().State
+	if got.NotifyOnIdle {
+		t.Fatalf("notify_on_idle = true, want false for a config that never set it")
+	}
+	if !got.Enabled || got.NotifyOnBlocked || got.BottomLines != 20 {
+		t.Fatalf("other stored state values not preserved: %+v", got)
+	}
+}
+
+func TestConfigPreservesExplicitNotifyOnIdle(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	support := filepath.Join(home, "Library", "Application Support", "WebTabinal")
+	if err := os.MkdirAll(support, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"state":{"notify_on_idle":true}}`
+	if err := os.WriteFile(filepath.Join(support, "config.json"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := LoadOrCreate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !store.Public().State.NotifyOnIdle {
+		t.Fatal("explicit notify_on_idle=true was not preserved")
+	}
+}
+
+func TestPatchEnablesNotifyOnIdle(t *testing.T) {
+	store := newTestStore(t)
+	got, err := store.Patch(map[string]any{"state": map[string]any{"notify_on_idle": true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.State.NotifyOnIdle {
+		t.Fatalf("patched state = %+v", got.State)
+	}
+
+	reloaded, err := LoadOrCreate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reloaded.Public().State.NotifyOnIdle {
+		t.Fatal("notify_on_idle did not survive a reload")
 	}
 }

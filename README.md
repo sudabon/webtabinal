@@ -112,17 +112,77 @@ make build
 
 ## 通知
 
-コマンド完了（タブが非アクティブ、またはウィンドウがフォーカスされていないとき）、ターミナルが受け取った OSC 9 / OSC 99 / OSC 777（エージェントの完了・承認待ちなど）、および画面検知による `blocked` 遷移で通知を出します。ネイティブ `.app` では macOS 通知、ブラウザでは Web Notification を使い、両方を同時に出すことはありません。待ち通知と `blocked` 通知は `notification.min_duration_ms` の対象外です。
+コマンド完了（タブが非アクティブ、またはウィンドウがフォーカスされていないとき）、ターミナルが受け取った OSC 9 / OSC 99 / OSC 777（エージェントの完了・承認待ちなど）、画面検知による `blocked` 遷移、**エージェント自身の stop hook が申告したターン完了**、および画面検知による `working` → `idle` 遷移（既定オフ）で通知を出します。ネイティブ `.app` では macOS 通知、ブラウザでは Web Notification を使い、両方を同時に出すことはありません。待ち通知、`blocked` 通知、ターン完了通知は `notification.min_duration_ms` の対象外です。
 
-同じセッションの OSC 待ち通知と画面検知 `blocked` は、4 秒の first-wins 窓で通知を 1 回にまとめます。状態 pill と `agent_state` フレームは抑制しません。ブラウザを閉じても daemon が残っているため、再接続時の `sessions` snapshot が現在の agent state の authoritative な復元元です。
+**ターン完了は hook で受け取るのが確実です。** 画面検知は出力の静止で判定するため、エージェントが考えるために出力を止めただけでも `idle` に落ちて通知が出ます。エージェントはいずれもターンの終わりを自分で知っているので、[ターン完了を hook で通知する](#ターン完了を-hook-で通知する)の手順を入れてください。画面検知によるプロンプト復帰通知（`state.notify_on_idle`）は**既定でオフ**です。
+
+画面検知のプロンプト復帰通知をオンにした場合、対象は `working` からの遷移だけです。セッション開始直後の `none` → `idle` と、承認に答えた直後の `blocked` → `idle` では鳴りません。ConEmu 拡張の `OSC 9;4`（進捗）と `OSC 9;9`（作業ディレクトリ）は待ち通知として扱いません。
+
+同じセッションの OSC 待ち通知、hook のターン完了、画面検知 `blocked`、プロンプト復帰は、4 秒の first-wins 窓で通知を 1 回にまとめます。hook と画面検知の両方を有効にしても、窓の中なら通知は 1 回に収束します。状態 pill と `agent_state` フレームは抑制しません。ブラウザを閉じても daemon が残っているため、再接続時の `sessions` snapshot が現在の agent state の authoritative な復元元です。
 
 最初に WebTabinal の「設定 → 通知」を開き、「通知を有効にする」がオンであることを確認してください。「システム通知の許可が必要です」と表示されたら「通知を許可」をクリックします。「許可されていません」なら macOS の「システム設定 → 通知 → WebTabinal」、ブラウザ版ならサイト別の通知設定から許可してください。許可状態は「通知」画面を開いたときと、WebTabinal が再びフォーカスされたときに更新されます。
 
-エージェント状態の検出は既定でオンです。`blocked` 通知だけ止めたい場合は「blocked を通知する」をオフにします。状態検出自体をオフにすると pill は消え、既存の OSC 通知は残ります。
+エージェント状態の検出は既定でオンです。`blocked` 通知だけ止めたい場合は「blocked を通知する」をオフにします。画面検知でプロンプト復帰も通知したい場合は「画面検知でプロンプト復帰を通知する」をオンにします（既定オフ）。状態検出自体をオフにすると pill は消え、この 2 つの通知も止まりますが、既存の OSC 通知と hook のターン完了通知は残ります。
+
+### 通知するコマンドを絞る（既定でオン）
+
+**デスクトップ通知は `notification.commands` に載っているコマンドのセッションだけが出します。** 既定は `["claude", "codex", "cursor-agent", "agent"]` です。コマンド完了・OSC 待ち・`blocked`・プロンプト復帰の**すべての通知**が対象なので、`ls` や `git status` のような日常コマンドではバナーが出ません。
+
+一覧から外れたセッションでも**タブの未読ドットと Dock バッジは付く**ので、完了を取りこぼすことはありません。
+
+「設定 → 通知 → 通知するコマンド」から追加・削除できます。変更は即時反映され、デーモンの再起動は不要です。
+
+照合はコマンド行の**先頭トークンの basename の一致**です。大文字小文字は区別しません（macOS がテキスト欄の先頭を大文字にすることがあるため）。
+
+| 実行したコマンド | 照合されるコマンド名 |
+|---|---|
+| `claude` | `claude` |
+| `/usr/local/bin/claude --resume` | `claude` |
+| `make build` | `make` |
+| `npm run dev` | `npm` |
+
+一覧を空にすると絞り込みが無効になり、すべてのセッションが通知します。通知を全部止めるときは「通知を有効にする」をオフにしてください。
+
+### ターン完了を hook で通知する
+
+エージェントの stop hook から `webtabinal notify` を呼び、ターン完了を daemon に申告させます。画面の静止に頼らないので、思考のための一時停止では通知が出ません。
+
+貼り付ける断片はコマンドが出します。設定ファイルは読み書きしないので、出力を自分でマージしてください。
+
+```bash
+./bin/webtabinal hooks print claude
+./bin/webtabinal hooks print cursor-agent
+./bin/webtabinal hooks print codex
+```
+
+断片の `command` には**このバイナリの絶対パス**が入ります。`make build` でパスが変わる置き場所（別ディレクトリへコピーするなど）に移した場合は、貼り直すか安定した場所へ symlink してください。
+
+hook は端末に書けません。Claude Code は「hook は制御端末を持たない」と明記しており、cursor-agent も実機で `/dev/tty` を開けませんでした。代わりに `WEBTABINAL_SESSION_ID` を使います。この変数は WebTabinal が全セッションのシェルに export しているので、hook プロセスがどれだけ深い子でも届きます。`webtabinal notify` はこれを既定のセッション ID として使い、config.json からポートと認証トークンを読んで loopback API を叩きます。
+
+**通知が届かなくてもエージェントは止まりません。** daemon 未起動、セッション ID 不明、接続失敗のいずれでも `webtabinal notify` は無言で終了コード 0 を返します。stop hook が終了コード 2 を返すと Claude Code も cursor-agent もターンをブロックするため、通知の失敗でエージェントを止めない設計です。同じ理由で、存在しないセッション ID の申告もエンドポイント側で成功として受け流します。
+
+| エージェント | 貼り付け先 | hook |
+|---|---|---|
+| Claude Code | `~/.claude/settings.json` | `Stop` |
+| cursor-agent | `~/.cursor/hooks.json` | `stop`（**対話セッションのみ**。`-p` のヘッドレス実行では発火しません） |
+| Codex | `~/.codex/config.toml` | 不要（Codex 自身が OSC 9 を書きます） |
+
+cursor-agent は `~/.claude/settings.json` の hook も読み込みます。両方を設定すると cursor-agent のターンで 2 つの hook が発火しますが、4 秒の dedupe 窓で通知は 1 回に収束します。ただしタイトルが `Claude Code` 側になることがあります。
+
+承認待ち（`blocked`）は hook 化しません。画面検知と OSC で足りているためです。
+
+### hook を入れない場合（既存ユーザーの移行）
+
+以前のバージョンは画面検知の `working` → `idle` 遷移でターン完了を通知していました。この挙動は `state.notify_on_idle` になり、**既定でオフ**です。更新後もターン完了の通知を受け取るには、次のどちらかを行ってください。
+
+1. 各エージェントに stop hook を入れる（[ターン完了を hook で通知する](#ターン完了を-hook-で通知する)）。推奨
+2. 以前の挙動に戻す。「設定 → 通知 → 画面検知でプロンプト復帰を通知する」をオンにする
+
+画面検知は出力の静止で判定するため、静かに考えている間も通知が出ます。誤検知が多い場合は `state.quiescence_ms` を上げてください。hook を入れた環境でこれをオンにしても、4 秒の dedupe 窓で通知は 1 回に収束します。
 
 ### Codex
 
-WebTabinal が未知のターミナル扱いになっても確実に OSC 9 を送るよう、`~/.codex/config.toml` で通知種別と方式を明示します。
+Codex に hook は不要です。ターン完了時に Codex 自身が OSC 9 を端末へ書くので、WebTabinal がそれを拾います。WebTabinal が未知のターミナル扱いになっても確実に OSC 9 を送るよう、`~/.codex/config.toml` で通知種別と方式を明示します。
 
 ```toml
 [tui]
@@ -135,38 +195,18 @@ notification_condition = "unfocused"
 
 ### Claude Code
 
-`~/.claude/settings.json` に次のフックを追加します。`Stop` はメインエージェントの応答完了時、`PermissionRequest` は承認ダイアログの直前、`Notification` の `idle_prompt` は入力待ちのアイドル通知時に OSC 9 を送ります。
+`webtabinal hooks print claude` の出力を `~/.claude/settings.json` にマージします。`Stop` はメインエージェントの応答完了時に発火します。
 
 ```json
 {
   "hooks": {
     "Stop": [
       {
+        "matcher": "",
         "hooks": [
           {
             "type": "command",
-            "command": "printf '\\033]9;Claude Code turn complete\\007' > /dev/tty"
-          }
-        ]
-      }
-    ],
-    "PermissionRequest": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "printf '\\033]9;Claude Code needs approval\\007' > /dev/tty"
-          }
-        ]
-      }
-    ],
-    "Notification": [
-      {
-        "matcher": "idle_prompt",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "printf '\\033]9;Claude Code is waiting for input\\007' > /dev/tty"
+            "command": "/path/to/bin/webtabinal notify --title 'Claude Code'"
           }
         ]
       }
@@ -175,9 +215,55 @@ notification_condition = "unfocused"
 }
 ```
 
-`/dev/tty` へ書くことで、フックの標準出力ではなく Claude Code を実行中の WebTabinal セッションへ送ります。フックの仕様は [Claude Code hooks reference](https://code.claude.com/docs/en/hooks) を参照してください。
+`command` の絶対パスは `webtabinal hooks print claude` が実際の値を埋めて出します。
+
+以前この README が案内していた `printf '\033]9;…' > /dev/tty` は**現在は動きません**。Claude Code の hook は制御端末を持たないため `/dev/tty` を開けません（実機で確認済み）。
+
+daemon に依存せず端末へ OSC を書きたい場合は、hook の標準出力に `terminalSequence` を返す方法もあります。Claude Code 自身が端末へ書くため hook 側に端末は不要です（1000 文字上限、`Stop` は対応イベント）。
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"Stop\",\"terminalSequence\":\"\\u001b]9;Claude Code turn complete\\u0007\"}}'"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+こちらは OSC 9 のテキストしか運べないため、通知の種別（ターン完了か承認待ちか）を区別できません。通常は `webtabinal notify` を使ってください。
+
+承認待ちと入力待ちは画面検知の `blocked` と OSC でカバーします。以前の `PermissionRequest` / `Notification` フックは `/dev/tty` 依存で動かないため削除しました。フックの仕様は [Claude Code hooks reference](https://code.claude.com/docs/en/hooks) を参照してください。
 
 ### Cursor Agent
+
+`webtabinal hooks print cursor-agent` の出力を `~/.cursor/hooks.json` にマージします。
+
+```json
+{
+  "version": 1,
+  "hooks": {
+    "stop": [
+      {
+        "type": "command",
+        "command": "/path/to/bin/webtabinal notify --title 'Cursor Agent'"
+      }
+    ]
+  }
+}
+```
+
+**この hook は対話セッションでのみ発火します。** `cursor-agent -p` のヘッドレス実行では発火しません（実機で確認済み）。WebTabinal 内は対話モードなので通常は問題になりませんが、動作確認を `-p` で行うと発火せず、設定を疑ってしまいます。
+
+cursor-agent は端末に OSC を書きません（`/dev/tty` を開けず、標準出力に返せるのは `followup_message` だけです）。ターン完了の通知はこの hook 経由が唯一の確実な手段です。
 
 フィクスチャで検証した Cursor Agent は **`2026.08.11-e8db854`** です。「latest」の無条件保証はありません。
 
@@ -211,7 +297,9 @@ notification_condition = "unfocused"
 
 | 症状 | 切り分け対象 | 確認・対処 |
 |------|------------------|------------|
-| エージェント完了時に未読ドットも通知も出ない | エージェントのイベント出力 | OSC 9 プローブを実行し、プローブだけ成功するなら Codex / Claude Code の設定と `/dev/tty` 出力を確認する |
+| エージェント完了時に未読ドットも通知も出ない | エージェントのイベント出力 | OSC 9 プローブを実行し、プローブだけ成功するなら Codex の `[tui]` 設定と各エージェントの stop hook を確認する |
+| ターン完了の通知が来ない | hook 設定 / `state.notify_on_idle` | [ターン完了を hook で通知する](#ターン完了を-hook-で通知する)の断片が実際の設定ファイルに入っているか（`webtabinal hooks print <agent>` の出力と貼り付け先を照合）、`command` の絶対パスが今のバイナリを指しているかを確認する。hook を入れない運用なら「設定 → 通知 → 画面検知でプロンプト復帰を通知する」をオンにする |
+| hook を入れたのに何も起きない | hook の発火条件 | cursor-agent の `stop` は対話セッションのみ（`-p` では発火しない）。手元で `WEBTABINAL_SESSION_ID=<id> ./bin/webtabinal notify --title probe` を WebTabinal のタブから直接実行し、通知が出るか切り分ける |
 | 未読ドットは付くが通知が出ない | WebTabinal の通知有効化・許可 | 「設定 → 通知」で有効化と正規化された許可状態を確認する |
 | 背景では出るが前面のアクティブタブでは出ない | アプリのフォーカス抑制 | WebTabinal の「操作中も通知する」をオンにする。Codex が元イベントを送るには `notification_condition = "always"` も必要 |
 | 許可状態が「許可されていません」 | macOS / ブラウザの許可 | macOS の「システム設定 → 通知 → WebTabinal」、またはブラウザのサイト設定で許可し、WebTabinal へフォーカスを戻す |
@@ -219,8 +307,11 @@ notification_condition = "unfocused"
 | sidebar に状態 pill が出ない | 状態検出または未検出シェル | 「設定 → 通知」で状態検出がオンか確認する。通常のシェルは `none` のため pill を出さない |
 | Cursor の状態が idle のまま / 合わない | 画面再構築・identity・pattern のどれが失効したか | `webtabinal state snapshot <session-id>` で下端行、agent、manifest、match 行を確認する。daemon 未起動なら起動はしない |
 | `blocked` なのに通知がない | `notify_on_blocked` / フォーカス / 4 秒 dedupe | 「blocked を通知する」がオンか、前面抑制、直前の OSC 待ち通知との窓を確認する。Cursor の blocked はこのビルドでは未検証 |
+| 未読ドットだけ付いて通知が出ない | `notification.commands` の絞り込み | 「設定 → 通知 → 通知するコマンド」にそのコマンド名があるか確認する。照合は先頭トークンの basename |
+| `cursor-agent` が作業中なのに idle 通知が出る | 静止判定が思考時間より短い | `cursor-agent` の `working` は出力量だけで判定するため、静かに思考する時間が `state.quiescence_ms`（既定 1500）を超えると idle に落ちる。この値を上げる |
 | 再接続後に pill が戻らない | 初期 snapshot | daemon が生きていれば `sessions` に `agent_state` が含まれる。daemon ごと落ちていれば状態は復元されない |
 | タブ順が勝手に変わる | 自動ソートはしない | `blocked` でも daemon の並びと Cmd+数字は変わらない |
+| プロンプトごとに `command not found` が出る（`_cmux_prompt_command` など） | daemon を起動したターミナルのシェル統合 | 他のターミナルが export した `PROMPT_COMMAND` を daemon が継承していた。現在は取り除くので、古い daemon を停止して起動し直す。応急処置はそのタブで `__webtabinal_rest_prompt=` |
 
 ## LaunchAgent（任意: ログイン時の常駐）
 
@@ -249,6 +340,7 @@ make build
 | `sidebar_width` | `240` |
 | `notification.enabled` | `true` |
 | `notification.always` | `false` |
+| `notification.commands` | `["claude", "codex", "cursor-agent", "agent"]`（通知を出すコマンド。`[]` で絞り込み無効。設定 UI から編集可） |
 | `notification.min_duration_ms` | `0` |
 | `notification.sound` | `false`（v0.1 では未実装） |
 | `state.enabled` | `true` |
@@ -256,6 +348,7 @@ make build
 | `state.quiescence_ms` | `1500`（0–60000。マニフェスト指定があれば優先） |
 | `state.bottom_lines` | `15`（1–200。マニフェスト指定があれば優先） |
 | `state.notify_on_blocked` | `true` |
+| `state.notify_on_idle` | `false`（画面検知によるプロンプト復帰通知。既定オフ。ターン完了は stop hook で受け取るのが確実。hook を入れないなら `true` にする） |
 | `state.manifest_dir` | `""`（空なら `~/Library/Application Support/WebTabinal/manifests`。変更はデーモン再起動後） |
 | `confirm_close_running` | `true` |
 | `copy_on_select` | `false` |

@@ -10,13 +10,10 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/sudabon/webtabinal/internal/config"
 	"github.com/sudabon/webtabinal/internal/paths"
 )
-
-const snapshotHTTPTimeout = 5 * time.Second
 
 type snapshotOptions struct {
 	SessionID string
@@ -68,42 +65,11 @@ func parseStateArgs(args []string) (snapshotOptions, error) {
 	return opts, nil
 }
 
-type snapshotClient struct {
-	baseURL string
-	token   string
-	client  *http.Client
-}
-
-func snapshotClientFromConfig(cfg *config.Store, client *http.Client) snapshotClient {
-	if client == nil {
-		client = &http.Client{Timeout: snapshotHTTPTimeout}
-	}
-	port := 8642
-	token := ""
-	if cfg != nil {
-		port = cfg.Get().Port
-		token = cfg.AuthToken()
-	}
-	return snapshotClient{
-		baseURL: "http://127.0.0.1:" + strconv.Itoa(port),
-		token:   token,
-		client:  client,
-	}
-}
-
-func (c snapshotClient) fetch(ctx context.Context, opts snapshotOptions) ([]byte, int, error) {
+func (c daemonClient) fetch(ctx context.Context, opts snapshotOptions) ([]byte, int, error) {
 	q := url.Values{}
 	q.Set("lines", strconv.Itoa(opts.Lines))
 	q.Set("buffer", opts.Buffer)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(c.baseURL, "/")+"/api/sessions/"+url.PathEscape(opts.SessionID)+"/state-snapshot?"+q.Encode(), nil)
-	if err != nil {
-		return nil, 0, err
-	}
-	if u, err := url.Parse(c.baseURL); err == nil {
-		req.Host = u.Host
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	resp, err := c.client.Do(req)
+	resp, err := c.do(ctx, http.MethodGet, "/api/sessions/"+url.PathEscape(opts.SessionID)+"/state-snapshot?"+q.Encode(), nil)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -116,11 +82,11 @@ func (c snapshotClient) fetch(ctx context.Context, opts snapshotOptions) ([]byte
 }
 
 func runStateSnapshot(wOut, wErr io.Writer, cfg *config.Store, client *http.Client, opts snapshotOptions) int {
-	return runStateSnapshotClient(wOut, wErr, snapshotClientFromConfig(cfg, client), opts)
+	return runStateSnapshotClient(wOut, wErr, daemonClientFromConfig(cfg, client, daemonHTTPTimeout), opts)
 }
 
-func runStateSnapshotClient(wOut, wErr io.Writer, c snapshotClient, opts snapshotOptions) int {
-	ctx, cancel := context.WithTimeout(context.Background(), snapshotHTTPTimeout)
+func runStateSnapshotClient(wOut, wErr io.Writer, c daemonClient, opts snapshotOptions) int {
+	ctx, cancel := context.WithTimeout(context.Background(), daemonHTTPTimeout)
 	defer cancel()
 	body, status, err := c.fetch(ctx, opts)
 	if err != nil {

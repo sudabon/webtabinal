@@ -20,15 +20,30 @@ type NotificationConfig struct {
 	Always        bool `json:"always"`
 	MinDurationMs int  `json:"min_duration_ms"`
 	Sound         bool `json:"sound"`
+	// Commands whitelists the session commands that may raise a desktop
+	// banner. Matching uses the basename of the command's first token. An
+	// empty list disables the restriction; notification.enabled turns
+	// everything off.
+	Commands []string `json:"commands"`
+}
+
+// DefaultNotifyCommands is the bundled coding-agent command set.
+func DefaultNotifyCommands() []string {
+	return []string{"claude", "codex", "cursor-agent", "agent"}
 }
 
 type StateConfig struct {
-	Enabled         bool   `json:"enabled"`
-	DebounceMs      int    `json:"debounce_ms"`
-	QuiescenceMs    int    `json:"quiescence_ms"`
-	BottomLines     int    `json:"bottom_lines"`
-	NotifyOnBlocked bool   `json:"notify_on_blocked"`
-	ManifestDir     string `json:"manifest_dir"`
+	Enabled         bool `json:"enabled"`
+	DebounceMs      int  `json:"debounce_ms"`
+	QuiescenceMs    int  `json:"quiescence_ms"`
+	BottomLines     int  `json:"bottom_lines"`
+	NotifyOnBlocked bool `json:"notify_on_blocked"`
+	// NotifyOnIdle turns on the screen-derived prompt-return notification. It
+	// defaults off: output quiescence cannot tell a finished turn from an agent
+	// that merely paused to think, and an agent's stop hook reports the same
+	// thing exactly. It stays available for agents without a usable hook.
+	NotifyOnIdle bool   `json:"notify_on_idle"`
+	ManifestDir  string `json:"manifest_dir"`
 }
 
 type KeyBindingsConfig struct {
@@ -80,6 +95,7 @@ func Defaults() Config {
 			Always:        false,
 			MinDurationMs: 0,
 			Sound:         false,
+			Commands:      DefaultNotifyCommands(),
 		},
 		State: StateConfig{
 			Enabled:         true,
@@ -87,6 +103,7 @@ func Defaults() Config {
 			QuiescenceMs:    1500,
 			BottomLines:     15,
 			NotifyOnBlocked: true,
+			NotifyOnIdle:    false,
 			ManifestDir:     "",
 		},
 		ConfirmCloseRunning: true,
@@ -198,12 +215,34 @@ func (s *Store) applyDefaults() {
 	if s.cfg.State.BottomLines == 0 {
 		s.cfg.State.BottomLines = d.State.BottomLines
 	}
+	// state.notify_on_idle needs no fill-in: its default is false, which is
+	// also what a missing key unmarshals to, so an older config lands on the
+	// default and an explicit true survives untouched.
+
+	// A missing key unmarshals to nil, while an explicit [] unmarshals to an
+	// empty non-nil slice. Only the former gets the default list.
+	if s.cfg.Notification.Commands == nil {
+		s.cfg.Notification.Commands = d.Notification.Commands
+	} else {
+		for i, name := range s.cfg.Notification.Commands {
+			s.cfg.Notification.Commands[i] = strings.TrimSpace(name)
+		}
+	}
+}
+
+// clone returns a Config whose slice fields do not share storage with the
+// receiver, so callers and json.Unmarshal cannot write through into it.
+func (c Config) clone() Config {
+	if c.Notification.Commands != nil {
+		c.Notification.Commands = append([]string(nil), c.Notification.Commands...)
+	}
+	return c
 }
 
 func (s *Store) Get() Config {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.cfg
+	return s.cfg.clone()
 }
 
 func (s *Store) Public() Config {
@@ -232,7 +271,7 @@ func (s *Store) Patch(patch map[string]any) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	next := s.cfg
+	next := s.cfg.clone()
 	if err := json.Unmarshal(updated, &next); err != nil {
 		return Config{}, err
 	}
@@ -245,7 +284,7 @@ func (s *Store) Patch(patch map[string]any) (Config, error) {
 	if err := s.saveLocked(); err != nil {
 		return Config{}, err
 	}
-	out := s.cfg
+	out := s.cfg.clone()
 	out.AuthToken = ""
 	return out, nil
 }
@@ -283,6 +322,11 @@ func validate(cfg Config) error {
 	}
 	if cfg.Notification.MinDurationMs < 0 {
 		return fmt.Errorf("notification.min_duration_ms must be non-negative")
+	}
+	for _, name := range cfg.Notification.Commands {
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("notification.commands entries must not be blank")
+		}
 	}
 	if err := validateKeyBindings(cfg.KeyBindings); err != nil {
 		return err

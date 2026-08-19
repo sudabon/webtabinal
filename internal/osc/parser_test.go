@@ -60,6 +60,34 @@ func TestParseOSC9EmptyIgnored(t *testing.T) {
 	}
 }
 
+func TestParseOSC9ConEmuSubcommandsIgnored(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload string
+	}{
+		{"progress", "\x1b]9;4;1;40\x07"},
+		{"progress clear", "\x1b]9;4;0\x07"},
+		{"working directory", "\x1b]9;9;/Users/example/project\x07"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var p osc.Parser
+			evs := p.Feed([]byte(tc.payload))
+			if len(evs) != 0 {
+				t.Fatalf("expected no events, got %#v", evs)
+			}
+		})
+	}
+}
+
+func TestParseOSC9PlainMessageStillNotifies(t *testing.T) {
+	var p osc.Parser
+	evs := p.Feed([]byte("\x1b]9;build finished\x07"))
+	if len(evs) != 1 || evs[0].Kind != osc.EventNotify || evs[0].Body != "build finished" {
+		t.Fatalf("notify: %#v", evs)
+	}
+}
+
 func TestParseOSC99TitleAndBody(t *testing.T) {
 	var p osc.Parser
 	evs := p.Feed([]byte("\x1b]99;i=1:p=title;Claude Code\x07\x1b]99;i=1:p=body;Permission required\x07"))

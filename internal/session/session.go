@@ -307,11 +307,29 @@ func (s *Session) replyColorQueries(ids []int) {
 }
 
 func shellEnv(id string, p osc.Palette) []string {
-	env := append(os.Environ(),
+	env := append(dropForeignShellHooks(os.Environ()),
 		fmt.Sprintf("WEBTABINAL_SESSION_ID=%s", id),
 		"TERM=xterm-256color",
 	)
 	return withLocaleEnv(mergeThemeEnv(env, p), detectUTF8Locale())
+}
+
+// dropForeignShellHooks removes shell-integration hooks inherited from the
+// terminal that started the daemon. PROMPT_COMMAND is not normally exported,
+// so an environment entry means some other terminal's integration exported it;
+// the function it names is never defined inside a WebTabinal session, and our
+// bash integration would faithfully invoke it on every prompt. A PROMPT_COMMAND
+// the user's own startup files set is unaffected, because it is established
+// after the session shell starts.
+func dropForeignShellHooks(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, e := range env {
+		if key, _, _ := strings.Cut(e, "="); key == "PROMPT_COMMAND" {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 func mergeThemeEnv(env []string, p osc.Palette) []string {

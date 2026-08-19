@@ -2,7 +2,9 @@
 
 ## Purpose
 TBD - created by archiving change lterm-v01. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: REST session and config API
 The daemon SHALL expose REST endpoints under `/api`: list/create/duplicate/restart/delete sessions, reorder sessions, and get/patch config. Create MAY accept optional `cwd` (default `~`).
 
@@ -81,7 +83,9 @@ The daemon SHALL accept `PATCH /api/sessions/{id}` with JSON `{ "memo": "<string
 
 ### Requirement: Ephemeral notify WebSocket message
 
-The server SHALL broadcast `notify` frames on `/api/ws` to all connected clients when an OSC 9 or OSC 99 notify event is parsed. The frame SHALL be `{"t":"notify","sid":"<id>","title":"<string>","body":"<string>"}`. Empty title and body SHALL NOT produce a frame. The message SHALL NOT require the client to be attached to that session and SHALL NOT change the session `state` payload.
+The server SHALL broadcast `notify` frames on `/api/ws` to all connected clients when an OSC 9, OSC 99, or OSC 777 notify event is parsed. The frame SHALL be `{"t":"notify","sid":"<id>","title":"<string>","body":"<string>"}` with optional `kind` and `source` fields. Empty title and body SHALL NOT produce a frame. `OSC 9;4;…` and `OSC 9;9;…` payloads SHALL NOT produce a frame. The message SHALL NOT require the client to be attached to that session and SHALL NOT change the session `state` payload.
+
+Whether a frame raises a desktop banner SHALL be decided by the client from `notification.commands` and the session's command, so the daemon SHALL broadcast eligible frames regardless of that setting.
 
 #### Scenario: Notify is broadcast without attach
 
@@ -92,6 +96,11 @@ The server SHALL broadcast `notify` frames on `/api/ws` to all connected clients
 
 - **WHEN** a `running` session emits OSC 99
 - **THEN** subsequent `state` messages still report `running` for that session
+
+#### Scenario: ConEmu progress produces no frame
+
+- **WHEN** a session emits `OSC 9;4;1;40`
+- **THEN** no `t=notify` frame is broadcast for that session
 
 ### Requirement: Agent state in session snapshots
 
@@ -177,3 +186,47 @@ The snapshot response SHALL contain session ID, selected buffer, rows, columns, 
 - **WHEN** a successful or failed snapshot request is handled
 - **THEN** daemon logs can record request metadata and errors but do not record returned screen lines, match substrings, or the bearer token
 
+### Requirement: Agent prompt-return notification metadata
+
+A prompt-return notification SHALL use the existing `notify` WebSocket frame and SHALL add `kind: "agent_idle"` and `source: "screen"` without removing `sid`, `title`, or `body`. The title SHALL be the agent display name and the body SHALL state that the agent is ready for input. Clients SHALL be able to ignore the additive metadata.
+
+#### Scenario: Prompt return uses the existing frame family
+
+- **WHEN** an agent session changes from `working` to `idle` and the notification arbiter admits the event
+- **THEN** clients receive one `t=notify` frame with the session, agent display name as title, a body stating the agent is ready for input, `kind=agent_idle`, and `source=screen`
+
+#### Scenario: Older client remains compatible
+
+- **WHEN** an older client receives an `agent_idle` notify frame
+- **THEN** it can continue handling `sid`, `title`, and `body` as before
+
+### Requirement: Authenticated session notification endpoint
+
+The daemon SHALL expose `POST /api/sessions/{id}/notify` on the existing loopback server. It SHALL require the existing token authentication and Host/Origin checks. The request body SHALL accept `title`, `body`, and an optional `kind`, and SHALL reject a body whose `title` and `body` are both blank.
+
+On success the daemon SHALL broadcast the existing `notify` frame for that session with `source: "hook"` and the given `kind`, defaulting `kind` to `agent_idle`. A request naming an unknown session SHALL return success without broadcasting, so a hook racing session teardown does not fail.
+
+#### Scenario: Authenticated hook report broadcasts a notify frame
+
+- **WHEN** a request carries the valid token, names a live session, and supplies a body
+- **THEN** every connected WebSocket client receives one `t=notify` frame for that session with `source=hook`
+
+#### Scenario: Default kind is the prompt return
+
+- **WHEN** a request omits `kind`
+- **THEN** the broadcast frame carries `kind=agent_idle`
+
+#### Scenario: Unknown session is accepted without broadcasting
+
+- **WHEN** a request names a session that does not exist
+- **THEN** the daemon responds with success and no frame is broadcast
+
+#### Scenario: Blank report is rejected
+
+- **WHEN** a request supplies neither a title nor a body
+- **THEN** the daemon responds with a client error and no frame is broadcast
+
+#### Scenario: Unauthenticated report is refused
+
+- **WHEN** a request omits the token or presents a foreign Origin
+- **THEN** the daemon refuses it with the same status the other API routes use and no frame is broadcast

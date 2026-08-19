@@ -25,3 +25,24 @@ export function agentWaitContent(
     body: trimmedBody,
   };
 }
+
+/**
+ * Reports whether a session's command may raise a desktop banner.
+ *
+ * Matching uses the basename of the command's first token, so `make build` is
+ * `make` and `/usr/local/bin/claude --resume` is `claude`. An empty list
+ * disables the restriction; suppressing everything is `notification.enabled`.
+ * A session whose command is unknown cannot match a non-empty list.
+ *
+ * Case is ignored. macOS capitalizes the first letter in text fields, so a
+ * list entry can differ from the command as typed, and a case mismatch would
+ * silently stop every notification for that command.
+ */
+export function commandAllowsNotification(command: string | undefined, commands: string[]): boolean {
+  const allowed = commands.map((name) => name.trim().toLowerCase()).filter(Boolean);
+  if (allowed.length === 0) return true;
+  const first = (command ?? '').trim().split(/\s+/)[0] ?? '';
+  const name = first.slice(first.lastIndexOf('/') + 1).toLowerCase();
+  if (!name) return false;
+  return allowed.includes(name);
+}

@@ -22,6 +22,7 @@ const DEFAULT_STATE: StateConfig = {
   quiescence_ms: 1500,
   bottom_lines: 15,
   notify_on_blocked: true,
+  notify_on_idle: false,
   manifest_dir: '',
 };
 
@@ -205,7 +206,7 @@ test('settings modal opens on Appearance and can switch to General', async (t) =
     onKeyBindingsChange: () => {},
     shiftEnterNewline: true,
     onShiftEnterNewlineChange: () => {},
-    notification: { enabled: true, always: false, min_duration_ms: 0, sound: false },
+    notification: { enabled: true, always: false, min_duration_ms: 0, sound: false, commands: [] },
     notificationPermission: 'default' as const,
     onNotificationChange: () => {},
     state: DEFAULT_STATE,
@@ -457,6 +458,7 @@ test('notification settings persist immediately and roll back with a visible err
     always: false,
     min_duration_ms: 0,
     sound: false,
+    commands: [],
   };
   const patches: Array<Partial<NotificationConfig>> = [];
   let finishSave!: () => void;
@@ -539,7 +541,7 @@ test('notification permission is requested directly and refreshed on open and wi
   const render = () => {
     hooks.beginRender();
     return NotificationsSettings({
-      notification: { enabled: true, always: false, min_duration_ms: 0, sound: false },
+      notification: { enabled: true, always: false, min_duration_ms: 0, sound: false, commands: [] },
       state: DEFAULT_STATE,
       permissionState: 'default',
       onNotificationChange: () => {},
@@ -606,6 +608,7 @@ test('agent state settings persist, disable dependents, and roll back invalid nu
     always: true,
     min_duration_ms: 0,
     sound: false,
+    commands: [],
   };
   const statePatches: Array<Partial<StateConfig>> = [];
   const render = () => {
@@ -666,7 +669,59 @@ test('agent state settings persist, disable dependents, and roll back invalid nu
   assert.equal(walk(tree, (node) => node.type === 'input' && node.props?.id === 'state-debounce')?.props?.value, 120);
   assert.equal(walk(tree, (node) => node.type === 'input' && node.props?.id === 'state-quiescence')?.props?.value, 2000);
   assert.equal(walk(tree, (node) => node.props?.role === 'alert')?.props?.children, 'state.debounce_ms must be between 20 and 5000');
-  assert.deepEqual(persistedNotification, { enabled: true, always: true, min_duration_ms: 0, sound: false });
+  assert.deepEqual(persistedNotification, { enabled: true, always: true, min_duration_ms: 0, sound: false, commands: [] });
+});
+
+test('screen-derived prompt return toggle is off by default, persists, and follows detection', async (t) => {
+  const hooks = new HookHarness();
+  const { NotificationsSettings } = await loadComponents(t, hooks);
+  let persistedState: StateConfig = { ...DEFAULT_STATE };
+  let failNext = false;
+  const statePatches: Array<Partial<StateConfig>> = [];
+  const render = () => {
+    hooks.beginRender();
+    return NotificationsSettings({
+      notification: { enabled: true, always: false, min_duration_ms: 0, sound: false, commands: [] },
+      state: persistedState,
+      permissionState: 'granted',
+      onNotificationChange: () => {
+        throw new Error('notification must not change');
+      },
+      onStateChange: (patch) => {
+        statePatches.push(patch);
+        if (failNext) throw new Error('保存に失敗しました');
+        persistedState = { ...persistedState, ...patch };
+      },
+      onPermissionRefresh: async () => 'granted',
+      onPermissionRequest: async () => 'granted',
+    });
+  };
+
+  let tree = render();
+  const findIdle = (node: TreeNode) => walk(node, (n) => n.type === 'input' && n.props?.id === 'state-notify-idle');
+  assert.equal(findIdle(tree)?.props?.checked, false, 'ships off because quiescence mistakes a pause for a finished turn');
+
+  (findIdle(tree)?.props?.onChange as (event: { target: { checked: boolean } }) => void)({ target: { checked: true } });
+  await new Promise(setImmediate);
+  tree = render();
+  assert.deepEqual(statePatches, [{ notify_on_idle: true }]);
+  assert.equal(findIdle(tree)?.props?.checked, true);
+
+  // The event is screen-derived, so it cannot outlive detection.
+  (walk(tree, (n) => n.type === 'input' && n.props?.id === 'state-enabled')?.props?.onChange as (event: { target: { checked: boolean } }) => void)({ target: { checked: false } });
+  await new Promise(setImmediate);
+  tree = render();
+  assert.equal(findIdle(tree)?.props?.disabled, true);
+
+  (walk(tree, (n) => n.type === 'input' && n.props?.id === 'state-enabled')?.props?.onChange as (event: { target: { checked: boolean } }) => void)({ target: { checked: true } });
+  await new Promise(setImmediate);
+  failNext = true;
+  tree = render();
+  (findIdle(tree)?.props?.onChange as (event: { target: { checked: boolean } }) => void)({ target: { checked: false } });
+  await new Promise(setImmediate);
+  tree = render();
+  assert.equal(findIdle(tree)?.props?.checked, true, 'a failed save rolls back to the persisted value');
+  assert.equal(walk(tree, (n) => n.props?.role === 'alert')?.props?.children, '保存に失敗しました');
 });
 
 test('Shift+Enter newline toggle persists immediately and rolls back with a visible error', async (t) => {
@@ -716,4 +771,129 @@ test('Shift+Enter newline toggle persists immediately and rolls back with a visi
     'a failed save must roll the checkbox back to the persisted value',
   );
   assert.equal(walk(tree, (n) => n.props?.role === 'alert')?.props?.children, '保存に失敗しました');
+});
+
+test('notification command whitelist can be listed, added and removed', async (t) => {
+  const hooks = new HookHarness();
+  const { NotificationsSettings } = await loadComponents(t, hooks);
+  let persisted: NotificationConfig = {
+    enabled: true,
+    always: true,
+    min_duration_ms: 0,
+    sound: false,
+    commands: ['claude', 'codex'],
+  };
+  const patches: Array<Partial<NotificationConfig>> = [];
+  const onNotificationChange = async (patch: Partial<NotificationConfig>) => {
+    patches.push(patch);
+    persisted = { ...persisted, ...patch };
+  };
+  const render = () => {
+    hooks.beginRender();
+    return NotificationsSettings({
+      notification: persisted,
+      state: DEFAULT_STATE,
+      permissionState: 'granted',
+      onNotificationChange,
+      onStateChange: () => {},
+      onPermissionRefresh: async () => 'granted',
+      onPermissionRequest: async () => 'granted',
+    });
+  };
+  const chips = (tree: TreeNode) => {
+    const found: string[] = [];
+    walk(tree, (node) => {
+      if (node.type === 'button' && typeof node.props?.['data-command'] === 'string') {
+        found.push(node.props['data-command'] as string);
+      }
+      return false;
+    });
+    return found;
+  };
+  const field = (tree: TreeNode) =>
+    walk(tree, (node) => node.type === 'input' && node.props?.id === 'notification-command-input');
+  const form = (tree: TreeNode) =>
+    walk(tree, (node) => node.type === 'form' && node.props?.className === 'settings-command-add');
+  const submit = async (tree: TreeNode, value: string) => {
+    (field(tree)?.props?.onChange as (e: { target: { value: string } }) => void)({ target: { value } });
+    tree = render();
+    (form(tree)?.props?.onSubmit as (e: { preventDefault: () => void }) => void)({ preventDefault: () => {} });
+    await new Promise(setImmediate);
+    return render();
+  };
+
+  let tree = render();
+  for (const effect of hooks.effects) effect();
+  assert.deepEqual(chips(tree), ['claude', 'codex'], 'persisted commands must be listed');
+
+  tree = await submit(tree, '  make  ');
+  assert.deepEqual(patches, [{ commands: ['claude', 'codex', 'make'] }], 'submitted text must be trimmed');
+  assert.deepEqual(chips(tree), ['claude', 'codex', 'make']);
+  assert.equal(field(tree)?.props?.value, '', 'the field must clear after a successful add');
+
+  tree = await submit(tree, '   ');
+  assert.equal(patches.length, 1, 'a blank submission must not send a patch');
+
+  tree = await submit(tree, 'claude');
+  assert.equal(patches.length, 1, 'a duplicate must not send a patch');
+
+  tree = await submit(tree, 'Claude');
+  assert.equal(patches.length, 1, 'a duplicate differing only in case must not send a patch');
+
+  const input = field(tree);
+  assert.equal(input?.props?.autoCapitalize, 'off', 'macOS must not capitalize a command name');
+  assert.equal(input?.props?.autoCorrect, 'off');
+  assert.equal(input?.props?.spellCheck, false);
+  assert.equal(input?.props?.autoComplete, 'off');
+
+  const remove = walk(tree, (node) => node.type === 'button' && node.props?.['data-command'] === 'codex');
+  (remove?.props?.onClick as () => void)();
+  await new Promise(setImmediate);
+  tree = render();
+  assert.deepEqual(patches[1], { commands: ['claude', 'make'] });
+  assert.deepEqual(chips(tree), ['claude', 'make']);
+});
+
+test('a failed command patch is reported and rolled back', async (t) => {
+  const hooks = new HookHarness();
+  const { NotificationsSettings } = await loadComponents(t, hooks);
+  const persisted: NotificationConfig = {
+    enabled: true,
+    always: true,
+    min_duration_ms: 0,
+    sound: false,
+    commands: ['claude'],
+  };
+  const render = () => {
+    hooks.beginRender();
+    return NotificationsSettings({
+      notification: persisted,
+      state: DEFAULT_STATE,
+      permissionState: 'granted',
+      onNotificationChange: async () => { throw new Error('設定を保存できませんでした'); },
+      onStateChange: () => {},
+      onPermissionRefresh: async () => 'granted',
+      onPermissionRequest: async () => 'granted',
+    });
+  };
+
+  let tree = render();
+  for (const effect of hooks.effects) effect();
+  const field = walk(tree, (node) => node.type === 'input' && node.props?.id === 'notification-command-input');
+  (field?.props?.onChange as (e: { target: { value: string } }) => void)({ target: { value: 'make' } });
+  tree = render();
+  const form = walk(tree, (node) => node.type === 'form' && node.props?.className === 'settings-command-add');
+  (form?.props?.onSubmit as (e: { preventDefault: () => void }) => void)({ preventDefault: () => {} });
+  await new Promise(setImmediate);
+  tree = render();
+
+  const listed: string[] = [];
+  walk(tree, (node) => {
+    if (node.type === 'button' && typeof node.props?.['data-command'] === 'string') {
+      listed.push(node.props['data-command'] as string);
+    }
+    return false;
+  });
+  assert.deepEqual(listed, ['claude'], 'a failed add must roll back to the persisted list');
+  assert.equal(walk(tree, (node) => node.props?.role === 'alert')?.props?.children, '設定を保存できませんでした');
 });

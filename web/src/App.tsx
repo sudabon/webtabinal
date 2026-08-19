@@ -21,7 +21,7 @@ import {
   type NotificationPermissionState,
 } from './notification-provider';
 import { useColorScheme } from './theme';
-import { agentWaitContent, shouldRaiseDesktopNotification } from './notify';
+import { agentWaitContent, commandAllowsNotification, shouldRaiseDesktopNotification } from './notify';
 import { applyServerMessage } from './session-state';
 import type {
   AppConfig,
@@ -39,6 +39,7 @@ const DEFAULT_NOTIFICATION_CONFIG: NotificationConfig = {
   always: false,
   min_duration_ms: 0,
   sound: false,
+  commands: ['claude', 'codex', 'cursor-agent', 'agent'],
 };
 
 export const DEFAULT_STATE_CONFIG: StateConfig = {
@@ -47,6 +48,7 @@ export const DEFAULT_STATE_CONFIG: StateConfig = {
   quiescence_ms: 1500,
   bottom_lines: 15,
   notify_on_blocked: true,
+  notify_on_idle: false,
   manifest_dir: '',
 };
 
@@ -210,6 +212,8 @@ export default function App() {
       setUnread((prev) => new Set(prev).add(sid));
     }
 
+    if (!commandAllowsNotification(info.command, cfg.notification.commands)) return;
+
     const ok = info.exit === 0 || info.exit == null;
     const title = `${ok ? '✓' : '✗'} ${info.command}${ok ? '' : ` (exit ${info.exit})`}`;
     const body = `${cwdBasename(info.cwd)} ・ ${Math.round((info.run_ms ?? 0) / 1000)}s`;
@@ -219,7 +223,8 @@ export default function App() {
   const notifyAgentWait = useCallback((sid: string, title: string, body: string) => {
     const cfg = configRef.current;
     if (!cfg) return;
-    const content = agentWaitContent(title, body, sessionsRef.current.find((s) => s.id === sid)?.command);
+    const command = sessionsRef.current.find((s) => s.id === sid)?.command;
+    const content = agentWaitContent(title, body, command);
     if (!content) return;
     const active = activeRef.current === sid;
     const focused = focusedRef.current;
@@ -233,6 +238,8 @@ export default function App() {
     if (!active) {
       setUnread((prev) => new Set(prev).add(sid));
     }
+
+    if (!commandAllowsNotification(command, cfg.notification.commands)) return;
 
     showNotification(sid, content.title, content.body);
   }, [showNotification]);
