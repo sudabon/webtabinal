@@ -240,6 +240,7 @@ notification_condition = "unfocused"
 | `cursor-agent` が作業中なのに idle 通知が出る | 静止判定が思考時間より短い | `cursor-agent` の `working` は出力量だけで判定するため、静かに思考する時間が `state.quiescence_ms`（既定 1500）を超えると idle に落ちる。この値を上げる |
 | 再接続後に pill が戻らない | 初期 snapshot | daemon が生きていれば `sessions` に `agent_state` が含まれる。daemon ごと落ちていれば状態は復元されない |
 | タブ順が勝手に変わる | 自動ソートはしない | `blocked` でも daemon の並びと Cmd+数字は変わらない |
+| プロンプトごとに `command not found` が出る（`_cmux_prompt_command` など） | daemon を起動したターミナルのシェル統合 | 他のターミナルが export した `PROMPT_COMMAND` を daemon が継承していた。現在は取り除くので、古い daemon を停止して起動し直す。応急処置はそのタブで `__webtabinal_rest_prompt=` |
 
 ## LaunchAgent（任意: ログイン時の常駐）
 
