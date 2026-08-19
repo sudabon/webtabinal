@@ -220,3 +220,85 @@ func TestDarkPaletteEnvHintsDarkTheme(t *testing.T) {
 		}
 	}
 }
+
+func TestParseShellExitCarriesStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   string
+		want int
+	}{
+		{"zero", "\x1b]9973;exit;0\x1b\\", 0},
+		{"signal", "\x1b]9973;exit;130\x1b\\", 130},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var p osc.Parser
+			evs := p.Feed([]byte(tc.in))
+			if len(evs) != 1 {
+				t.Fatalf("expected 1 event, got %d %#v", len(evs), evs)
+			}
+			if evs[0].Kind != osc.EventShellExit {
+				t.Fatalf("kind = %v, want EventShellExit", evs[0].Kind)
+			}
+			if evs[0].ExitCode == nil || *evs[0].ExitCode != tc.want {
+				t.Fatalf("exit code = %v, want %d", evs[0].ExitCode, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseShellExitWithoutStatusStillSignals(t *testing.T) {
+	for _, tc := range []struct{ name, in string }{
+		{"missing", "\x1b]9973;exit\x1b\\"},
+		{"non numeric", "\x1b]9973;exit;oops\x1b\\"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var p osc.Parser
+			evs := p.Feed([]byte(tc.in))
+			if len(evs) != 1 || evs[0].Kind != osc.EventShellExit {
+				t.Fatalf("events = %#v, want one EventShellExit", evs)
+			}
+			if evs[0].ExitCode != nil {
+				t.Fatalf("exit code = %d, want nil", *evs[0].ExitCode)
+			}
+		})
+	}
+}
+
+func TestParseUnknownOSC9973SubtypeIsIgnored(t *testing.T) {
+	var p osc.Parser
+	evs := p.Feed([]byte("\x1b]9973;bogus;x\x1b\\"))
+	if len(evs) != 0 {
+		t.Fatalf("events = %#v, want none", evs)
+	}
+}
+
+func TestParseShellExitMixedWithOtherEventsSplitAcrossReads(t *testing.T) {
+	var p osc.Parser
+	stream := "\x1b]7;file:///tmp\x1b\\" +
+		"\x1b]9973;cmd;ZmFsc2U=\x1b\\" +
+		"\x1b]133;C\x1b\\" +
+		"\x1b]133;D;1\x1b\\" +
+		"\x1b]133;A\x1b\\" +
+		"\x1b]9973;exit;1\x1b\\"
+	var got []osc.Event
+	// Feed one byte at a time so every sequence is split mid-payload.
+	for i := range len(stream) {
+		got = append(got, p.Feed([]byte(stream[i:i+1]))...)
+	}
+
+	wantKinds := []osc.EventKind{
+		osc.EventCWD, osc.EventCmdStart, osc.EventCmdStart,
+		osc.EventCmdEnd, osc.EventPrompt, osc.EventShellExit,
+	}
+	if len(got) != len(wantKinds) {
+		t.Fatalf("events = %#v, want %d", got, len(wantKinds))
+	}
+	for i, want := range wantKinds {
+		if got[i].Kind != want {
+			t.Fatalf("event %d kind = %v, want %v", i, got[i].Kind, want)
+		}
+	}
+	if got[5].ExitCode == nil || *got[5].ExitCode != 1 {
+		t.Fatalf("shell exit code = %v, want 1", got[5].ExitCode)
+	}
+}

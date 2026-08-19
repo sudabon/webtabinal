@@ -1,4 +1,4 @@
-# WebTabinal bash integration v1
+# WebTabinal bash integration v2
 # Guard: only active inside WebTabinal sessions. bash 3.2 compatible.
 [[ -z "$WEBTABINAL_SESSION_ID" ]] && return
 [[ -n "$WEBTABINAL_INTEGRATION_LOADED" ]] && return
@@ -91,6 +91,38 @@ __webtabinal_install_prompt() {
       ;;
   esac
 }
+
+# Announce that the shell is terminating on its own. `exit` and Ctrl+D return
+# the last command's status, so the daemon cannot tell a user-requested exit
+# from a crash by status alone; this signal is what distinguishes them.
+__webtabinal_setstatus() {
+  return $1
+}
+
+__webtabinal_atexit() {
+  local code=$?
+  if [[ -z "$__webtabinal_exit_sent" ]]; then
+    __webtabinal_exit_sent=1
+    __webtabinal_osc "9973;exit;${code}"
+  fi
+  if [[ -n "$__webtabinal_prior_exit_cmd" ]]; then
+    # Hand the user's trap the status the shell is exiting with.
+    eval "__webtabinal_setstatus $code; $__webtabinal_prior_exit_cmd"
+  fi
+  return $code
+}
+
+__webtabinal_prior_exit_cmd=
+__wt_exit_trap=$(trap -p EXIT 2>/dev/null) || __wt_exit_trap=
+if [[ -n "$__wt_exit_trap" ]]; then
+  __wt_exit_trap=${__wt_exit_trap#trap -- \'}
+  __wt_exit_trap=${__wt_exit_trap%\' EXIT}
+  case "$__wt_exit_trap" in
+    *__webtabinal_atexit*) ;;
+    *) __webtabinal_prior_exit_cmd=$__wt_exit_trap ;;
+  esac
+fi
+trap '__webtabinal_atexit' EXIT
 
 __webtabinal_prior_debug_cmd=
 __wt_trap=$(trap -p DEBUG 2>/dev/null) || __wt_trap=

@@ -149,3 +149,111 @@ func newManagerConfig(t *testing.T, raw string) *config.Store {
 	}
 	return store
 }
+
+func TestShouldCloseTab(t *testing.T) {
+	code := func(v int) *int { return &v }
+	for _, tc := range []struct {
+		name             string
+		info             Info
+		closeOnCleanExit bool
+		want             bool
+	}{
+		{
+			name:             "signal with non-zero status closes",
+			info:             Info{Integrated: true, PromptSeen: true, ShellExited: true, ExitCode: code(1)},
+			closeOnCleanExit: true,
+			want:             true,
+		},
+		{
+			name:             "no signal with non-zero status keeps",
+			info:             Info{Integrated: true, PromptSeen: true, ExitCode: code(1)},
+			closeOnCleanExit: true,
+			want:             false,
+		},
+		{
+			name:             "no signal with zero status closes",
+			info:             Info{Integrated: true, PromptSeen: true, ExitCode: code(0)},
+			closeOnCleanExit: true,
+			want:             true,
+		},
+		{
+			name:             "disabled keeps despite signal",
+			info:             Info{Integrated: true, PromptSeen: true, ShellExited: true, ExitCode: code(0)},
+			closeOnCleanExit: false,
+			want:             false,
+		},
+		{
+			name:             "integrated without a prompt keeps despite zero status",
+			info:             Info{Integrated: true, ExitCode: code(0)},
+			closeOnCleanExit: true,
+			want:             false,
+		},
+		{
+			name:             "integrated without a prompt keeps despite signal",
+			info:             Info{Integrated: true, ShellExited: true, ExitCode: code(0)},
+			closeOnCleanExit: true,
+			want:             false,
+		},
+		{
+			name:             "unintegrated closes on zero status",
+			info:             Info{ExitCode: code(0)},
+			closeOnCleanExit: true,
+			want:             true,
+		},
+		{
+			name:             "unintegrated keeps on non-zero status",
+			info:             Info{ExitCode: code(1)},
+			closeOnCleanExit: true,
+			want:             false,
+		},
+		{
+			name:             "missing status without a signal keeps",
+			info:             Info{Integrated: true, PromptSeen: true},
+			closeOnCleanExit: true,
+			want:             false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldCloseTab(tc.info, tc.closeOnCleanExit); got != tc.want {
+				t.Fatalf("shouldCloseTab = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestHandleExitRemovesSessionOnSignalledNonZeroExit(t *testing.T) {
+	store := newManagerConfig(t, `{"close_tab_on_clean_exit":true,"shell":"/bin/zsh","auth_token":"test"}`)
+	code := 1
+	s := &Session{
+		ID: "s1", State: StateExited, ExitCode: &code,
+		Integrated: true, PromptSeen: true, ShellExited: true,
+	}
+	m := &Manager{
+		sessions: map[string]*Session{s.ID: s},
+		order:    []string{s.ID},
+		cfg:      store,
+	}
+
+	m.handleExit(s)
+
+	if _, ok := m.Get(s.ID); ok {
+		t.Fatal("a signalled exit should remove the session even with status 1")
+	}
+}
+
+func TestHandleExitKeepsSessionThatNeverReachedAPrompt(t *testing.T) {
+	store := newManagerConfig(t, `{"close_tab_on_clean_exit":true,"shell":"/bin/zsh","auth_token":"test"}`)
+	code := 0
+	s := &Session{ID: "s1", State: StateExited, ExitCode: &code, Integrated: true}
+	m := &Manager{
+		sessions: map[string]*Session{s.ID: s},
+		order:    []string{s.ID},
+		cfg:      store,
+	}
+
+	m.handleExit(s)
+
+	if _, ok := m.Get(s.ID); !ok {
+		t.Fatal("a session that never prompted should keep its tab")
+	}
+}
