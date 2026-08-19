@@ -112,13 +112,30 @@ make build
 
 ## 通知
 
-コマンド完了（タブが非アクティブ、またはウィンドウがフォーカスされていないとき）、ターミナルが受け取った OSC 9 / OSC 99 / OSC 777（エージェントの完了・承認待ちなど）、および画面検知による `blocked` 遷移で通知を出します。ネイティブ `.app` では macOS 通知、ブラウザでは Web Notification を使い、両方を同時に出すことはありません。待ち通知と `blocked` 通知は `notification.min_duration_ms` の対象外です。
+コマンド完了（タブが非アクティブ、またはウィンドウがフォーカスされていないとき）、ターミナルが受け取った OSC 9 / OSC 99 / OSC 777（エージェントの完了・承認待ちなど）、画面検知による `blocked` 遷移、およびエージェントがターンを終えてプロンプトを返した `working` → `idle` 遷移で通知を出します。ネイティブ `.app` では macOS 通知、ブラウザでは Web Notification を使い、両方を同時に出すことはありません。待ち通知、`blocked` 通知、プロンプト復帰通知は `notification.min_duration_ms` の対象外です。
 
-同じセッションの OSC 待ち通知と画面検知 `blocked` は、4 秒の first-wins 窓で通知を 1 回にまとめます。状態 pill と `agent_state` フレームは抑制しません。ブラウザを閉じても daemon が残っているため、再接続時の `sessions` snapshot が現在の agent state の authoritative な復元元です。
+プロンプト復帰通知は `working` からの遷移だけが対象です。セッション開始直後の `none` → `idle` と、承認に答えた直後の `blocked` → `idle` では鳴りません。ConEmu 拡張の `OSC 9;4`（進捗）と `OSC 9;9`（作業ディレクトリ）は待ち通知として扱いません。
+
+同じセッションの OSC 待ち通知、画面検知 `blocked`、プロンプト復帰は、4 秒の first-wins 窓で通知を 1 回にまとめます。状態 pill と `agent_state` フレームは抑制しません。ブラウザを閉じても daemon が残っているため、再接続時の `sessions` snapshot が現在の agent state の authoritative な復元元です。
 
 最初に WebTabinal の「設定 → 通知」を開き、「通知を有効にする」がオンであることを確認してください。「システム通知の許可が必要です」と表示されたら「通知を許可」をクリックします。「許可されていません」なら macOS の「システム設定 → 通知 → WebTabinal」、ブラウザ版ならサイト別の通知設定から許可してください。許可状態は「通知」画面を開いたときと、WebTabinal が再びフォーカスされたときに更新されます。
 
-エージェント状態の検出は既定でオンです。`blocked` 通知だけ止めたい場合は「blocked を通知する」をオフにします。状態検出自体をオフにすると pill は消え、既存の OSC 通知は残ります。
+エージェント状態の検出は既定でオンです。`blocked` 通知だけ止めたい場合は「blocked を通知する」をオフにします。状態検出自体をオフにすると pill は消え、既存の OSC 通知は（後述の `state.notify_agents` の絞り込みも含めて）すべて従来どおり鳴ります。
+
+### 通知するエージェントを絞る
+
+デスクトップ通知のバナーは `state.notify_agents` に載っているエージェントのセッションだけに出ます。既定は `["claude", "codex", "cursor-agent"]` です。**エージェント以外のプロセス（`vim`、`npm run build` など）が OSC を出しても、バナーは出ません。** ただしタブの未読ドットと Dock バッジは従来どおり付くので、完了を取りこぼすことはありません。
+
+空リスト `[]` にすると、manifest で識別できたエージェントすべてが対象になります（`generic` と未識別セッションは除く）。ローカル manifest を足して独自のエージェントを使う場合はこちらが便利です。絞り込み自体を外したいときは `state.enabled` を `false` にします。
+
+この設定は設定 UI にはありません。`~/Library/Application Support/WebTabinal/config.json` を直接編集し、デーモンを再起動してください（設定ファイルの監視はしていません）。再起動せずに変えるなら config API に patch します。
+
+```bash
+curl -sS -X PATCH http://127.0.0.1:8642/api/config \
+  -H "Authorization: Bearer $(python3 -c 'import json,pathlib;print(json.loads(pathlib.Path.home().joinpath("Library/Application Support/WebTabinal/config.json").read_text())["auth_token"])')" \
+  -H 'Content-Type: application/json' \
+  -d '{"state":{"notify_agents":["claude","codex","cursor-agent"]}}'
+```
 
 ### Codex
 
@@ -219,6 +236,8 @@ notification_condition = "unfocused"
 | sidebar に状態 pill が出ない | 状態検出または未検出シェル | 「設定 → 通知」で状態検出がオンか確認する。通常のシェルは `none` のため pill を出さない |
 | Cursor の状態が idle のまま / 合わない | 画面再構築・identity・pattern のどれが失効したか | `webtabinal state snapshot <session-id>` で下端行、agent、manifest、match 行を確認する。daemon 未起動なら起動はしない |
 | `blocked` なのに通知がない | `notify_on_blocked` / フォーカス / 4 秒 dedupe | 「blocked を通知する」がオンか、前面抑制、直前の OSC 待ち通知との窓を確認する。Cursor の blocked はこのビルドでは未検証 |
+| エージェントなのに未読ドットだけで通知が出ない | `state.notify_agents` の絞り込み | そのエージェントの manifest ID がリストに載っているか確認する。`webtabinal state snapshot <session-id>` で実際に検知されている agent を確かめる |
+| `cursor-agent` が作業中なのに idle 通知が出る | 静止判定が思考時間より短い | `cursor-agent` の `working` は出力量だけで判定するため、静かに思考する時間が `state.quiescence_ms`（既定 1500）を超えると idle に落ちる。この値を上げる |
 | 再接続後に pill が戻らない | 初期 snapshot | daemon が生きていれば `sessions` に `agent_state` が含まれる。daemon ごと落ちていれば状態は復元されない |
 | タブ順が勝手に変わる | 自動ソートはしない | `blocked` でも daemon の並びと Cmd+数字は変わらない |
 
@@ -256,6 +275,7 @@ make build
 | `state.quiescence_ms` | `1500`（0–60000。マニフェスト指定があれば優先） |
 | `state.bottom_lines` | `15`（1–200。マニフェスト指定があれば優先） |
 | `state.notify_on_blocked` | `true` |
+| `state.notify_agents` | `["claude", "codex", "cursor-agent"]`（バナーを出す manifest ID。`[]` は識別済みエージェントすべて。設定 UI なし） |
 | `state.manifest_dir` | `""`（空なら `~/Library/Application Support/WebTabinal/manifests`。変更はデーモン再起動後） |
 | `confirm_close_running` | `true` |
 | `copy_on_select` | `false` |

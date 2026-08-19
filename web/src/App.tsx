@@ -47,6 +47,7 @@ export const DEFAULT_STATE_CONFIG: StateConfig = {
   quiescence_ms: 1500,
   bottom_lines: 15,
   notify_on_blocked: true,
+  notify_agents: ['claude', 'codex', 'cursor-agent'],
   manifest_dir: '',
 };
 
@@ -216,7 +217,7 @@ export default function App() {
     showNotification(sid, title, body);
   }, [showNotification]);
 
-  const notifyAgentWait = useCallback((sid: string, title: string, body: string) => {
+  const notifyAgentWait = useCallback((sid: string, title: string, body: string, banner?: boolean) => {
     const cfg = configRef.current;
     if (!cfg) return;
     const content = agentWaitContent(title, body, sessionsRef.current.find((s) => s.id === sid)?.command);
@@ -233,6 +234,9 @@ export default function App() {
     if (!active) {
       setUnread((prev) => new Set(prev).add(sid));
     }
+
+    // The daemon restricted this event to the unread mark.
+    if (banner === false) return;
 
     showNotification(sid, content.title, content.body);
   }, [showNotification]);
@@ -289,7 +293,7 @@ export default function App() {
           setSessions((prev) => applyServerMessage(prev, msg));
         }
         if (msg.t === 'notify') {
-          queueMicrotask(() => notifyAgentWait(msg.sid, msg.title, msg.body));
+          queueMicrotask(() => notifyAgentWait(msg.sid, msg.title, msg.body, msg.banner));
         }
         if (msg.t === 'error') {
           setActionError(msg.message);

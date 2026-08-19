@@ -282,7 +282,8 @@ func (h *Hub) broadcastNotify(s *session.Session, ev osc.Event) {
 	if strings.TrimSpace(ev.Title) == "" && strings.TrimSpace(ev.Body) == "" {
 		return
 	}
-	if !h.allowAttention(s.ID) {
+	banner := h.bannerAllowed(h.sessionAgentID(s.ID))
+	if banner && !h.allowAttention(s.ID) {
 		return
 	}
 	payload := map[string]any{
@@ -290,6 +291,9 @@ func (h *Hub) broadcastNotify(s *session.Session, ev osc.Event) {
 		"sid":   s.ID,
 		"title": ev.Title,
 		"body":  ev.Body,
+	}
+	if !banner {
+		payload["banner"] = false
 	}
 	for _, c := range h.clientSnapshot() {
 		h.send(c, payload)
@@ -303,39 +307,105 @@ func (h *Hub) allowAttention(sessionID string) bool {
 	return h.arbiter.Allow(sessionID)
 }
 
+// bannerAllowed reports whether an agent-attention event for agentID may raise
+// a desktop banner. A restricted event is still delivered so the tab is marked
+// unread; only the banner is withheld.
+func (h *Hub) bannerAllowed(agentID string) bool {
+	if h.cfg == nil {
+		return true
+	}
+	st := h.cfg.Get().State
+	if !st.Enabled {
+		return true
+	}
+	if agentID == "" || agentID == agentdetect.IDGeneric {
+		return false
+	}
+	if len(st.NotifyAgents) == 0 {
+		return true
+	}
+	for _, id := range st.NotifyAgents {
+		if id == agentID {
+			return true
+		}
+	}
+	return false
+}
+
+// sessionAgentID reports the agent currently detected for a session. It is
+// used by signals that carry no snapshot of their own, such as OSC events.
+func (h *Hub) sessionAgentID(sessionID string) string {
+	if h.manager == nil {
+		return ""
+	}
+	snap, ok := h.manager.AgentSnapshot(sessionID)
+	if !ok {
+		return ""
+	}
+	return snap.AgentID
+}
+
 func (h *Hub) onAgentSnapshot(snap agentdetect.Snapshot) {
 	h.mu.Lock()
 	prev := h.lastAgent[snap.SessionID]
 	h.lastAgent[snap.SessionID] = snap.State
 	h.mu.Unlock()
 	h.broadcastAgentState(snap)
-	if snap.State != agentdetect.StateBlocked || prev == agentdetect.StateBlocked {
+
+	kind, body, ok := attentionEvent(prev, snap.State)
+	if !ok {
 		return
 	}
-	if h.cfg == nil || !h.cfg.Get().State.NotifyOnBlocked {
+	if h.cfg == nil {
+		return
+	}
+	st := h.cfg.Get().State
+	if kind == "agent_blocked" && !st.NotifyOnBlocked {
+		return
+	}
+	// A prompt return is screen-derived, so it cannot outlive detection.
+	if kind == "agent_idle" && !st.Enabled {
 		return
 	}
 	if h.manager == nil {
 		return
 	}
-	s, ok := h.manager.Get(snap.SessionID)
-	if !ok {
+	s, found := h.manager.Get(snap.SessionID)
+	if !found {
 		return
 	}
-	if !h.allowAttention(snap.SessionID) {
+	banner := h.bannerAllowed(snap.AgentID)
+	if banner && !h.allowAttention(snap.SessionID) {
 		return
 	}
-	title := h.agentDisplayName(snap.AgentID)
 	payload := map[string]any{
 		"t":      "notify",
 		"sid":    s.ID,
-		"title":  title,
-		"body":   "Waiting for input",
-		"kind":   "agent_blocked",
+		"title":  h.agentDisplayName(snap.AgentID),
+		"body":   body,
+		"kind":   kind,
 		"source": "screen",
+	}
+	if !banner {
+		payload["banner"] = false
 	}
 	for _, c := range h.clientSnapshot() {
 		h.send(c, payload)
+	}
+}
+
+// attentionEvent classifies an agent state transition as an attention event.
+// Entering `idle` from `none` is a session's initial idle-safe resolution and
+// entering it from `blocked` follows a user response, so neither asks for
+// attention.
+func attentionEvent(prev, next agentdetect.State) (kind, body string, ok bool) {
+	switch {
+	case next == agentdetect.StateBlocked && prev != agentdetect.StateBlocked:
+		return "agent_blocked", "Waiting for input", true
+	case next == agentdetect.StateIdle && prev == agentdetect.StateWorking:
+		return "agent_idle", "Ready for input", true
+	default:
+		return "", "", false
 	}
 }
 

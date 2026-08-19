@@ -159,9 +159,19 @@ func parseOSC(payload string) (Event, bool) {
 		if strings.TrimSpace(body) == "" {
 			return Event{}, false
 		}
+		if isConEmuSubcommand(body) {
+			return Event{}, false
+		}
 		return Event{Kind: EventNotify, Body: body, OSC: 9}, true
 	}
 	return Event{}, false
+}
+
+// isConEmuSubcommand reports whether an OSC 9 body is a ConEmu extension
+// rather than a notification: 9;4 is a progress report and 9;9 is a working
+// directory report. Neither asks for the user's attention.
+func isConEmuSubcommand(body string) bool {
+	return strings.HasPrefix(body, "4;") || strings.HasPrefix(body, "9;")
 }
 
 func parseOSC99(rest string) (Event, bool) {

@@ -22,6 +22,7 @@ const DEFAULT_STATE: StateConfig = {
   quiescence_ms: 1500,
   bottom_lines: 15,
   notify_on_blocked: true,
+  notify_agents: ['claude', 'codex', 'cursor-agent'],
   manifest_dir: '',
 };
 

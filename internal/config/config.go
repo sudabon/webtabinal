@@ -28,7 +28,16 @@ type StateConfig struct {
 	QuiescenceMs    int    `json:"quiescence_ms"`
 	BottomLines     int    `json:"bottom_lines"`
 	NotifyOnBlocked bool   `json:"notify_on_blocked"`
-	ManifestDir     string `json:"manifest_dir"`
+	// NotifyAgents holds the manifest IDs whose agent-attention notifications
+	// may raise a banner. An empty list permits every identified agent while
+	// still excluding the generic manifest and unidentified sessions.
+	NotifyAgents []string `json:"notify_agents"`
+	ManifestDir  string   `json:"manifest_dir"`
+}
+
+// DefaultNotifyAgents is the bundled coding-agent manifest set.
+func DefaultNotifyAgents() []string {
+	return []string{"claude", "codex", "cursor-agent"}
 }
 
 type KeyBindingsConfig struct {
@@ -87,6 +96,7 @@ func Defaults() Config {
 			QuiescenceMs:    1500,
 			BottomLines:     15,
 			NotifyOnBlocked: true,
+			NotifyAgents:    DefaultNotifyAgents(),
 			ManifestDir:     "",
 		},
 		ConfirmCloseRunning: true,
@@ -198,12 +208,30 @@ func (s *Store) applyDefaults() {
 	if s.cfg.State.BottomLines == 0 {
 		s.cfg.State.BottomLines = d.State.BottomLines
 	}
+	// A missing key unmarshals to nil, while an explicit [] unmarshals to an
+	// empty non-nil slice. Only the former gets the default list.
+	if s.cfg.State.NotifyAgents == nil {
+		s.cfg.State.NotifyAgents = d.State.NotifyAgents
+	} else {
+		for i, id := range s.cfg.State.NotifyAgents {
+			s.cfg.State.NotifyAgents[i] = strings.TrimSpace(id)
+		}
+	}
+}
+
+// clone returns a Config whose slice fields do not share storage with the
+// receiver, so callers and json.Unmarshal cannot write through into it.
+func (c Config) clone() Config {
+	if c.State.NotifyAgents != nil {
+		c.State.NotifyAgents = append([]string(nil), c.State.NotifyAgents...)
+	}
+	return c
 }
 
 func (s *Store) Get() Config {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.cfg
+	return s.cfg.clone()
 }
 
 func (s *Store) Public() Config {
@@ -232,7 +260,7 @@ func (s *Store) Patch(patch map[string]any) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	next := s.cfg
+	next := s.cfg.clone()
 	if err := json.Unmarshal(updated, &next); err != nil {
 		return Config{}, err
 	}
@@ -245,7 +273,7 @@ func (s *Store) Patch(patch map[string]any) (Config, error) {
 	if err := s.saveLocked(); err != nil {
 		return Config{}, err
 	}
-	out := s.cfg
+	out := s.cfg.clone()
 	out.AuthToken = ""
 	return out, nil
 }
@@ -302,6 +330,11 @@ func validateState(s StateConfig) error {
 	}
 	if s.BottomLines < 1 || s.BottomLines > 200 {
 		return fmt.Errorf("state.bottom_lines must be between 1 and 200")
+	}
+	for _, id := range s.NotifyAgents {
+		if strings.TrimSpace(id) == "" {
+			return fmt.Errorf("state.notify_agents entries must not be blank")
+		}
 	}
 	if s.ManifestDir != "" && !filepath.IsAbs(s.ManifestDir) {
 		return fmt.Errorf("state.manifest_dir must be empty or an absolute path")

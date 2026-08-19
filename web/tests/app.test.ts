@@ -82,6 +82,7 @@ function appConfig(colorScheme: ColorScheme, keyBindings: KeyBindings = DEFAULT_
       quiescence_ms: 1500,
       bottom_lines: 15,
       notify_on_blocked: true,
+      notify_agents: ['claude', 'codex', 'cursor-agent'],
       manifest_dir: '',
     },
     confirm_close_running: true,
@@ -111,6 +112,21 @@ function mockModules(hooks: HookHarness, api: object, emitSessions = false): Plu
     ['./components/Sidebar', 'export function Sidebar() {}'],
     ['./components/TabMemoModal', 'export function TabMemoModal() {}'],
     ['./components/TerminalView', 'export function TerminalView() {}'],
+    ['./notification-provider', `
+      export const NATIVE_NOTIFICATION_ACTIVATION_EVENT = 'webtabinal-native-notification-activated';
+      export function createNotificationProvider() {
+        return {
+          async show(request) {
+            const harness = globalThis.__webtabinalAppTest;
+            // A provider without permission requests no OS notification.
+            if (harness.notificationPermission !== 'granted') return;
+            harness.shown.push(request);
+          },
+          async permission() { return globalThis.__webtabinalAppTest.notificationPermission; },
+          async requestPermission() { return globalThis.__webtabinalAppTest.notificationPermission; },
+        };
+      }
+    `],
     ['./theme', 'export function useColorScheme() { return {}; }'],
     ['./util', `
       export function cwdBasename(value) { return value; }
@@ -142,7 +158,9 @@ function mockModules(hooks: HookHarness, api: object, emitSessions = false): Plu
     `],
   ]);
 
-  Object.assign(globalThis, { __webtabinalAppTest: { hooks, api } });
+  Object.assign(globalThis, {
+    __webtabinalAppTest: { hooks, api, shown: [], notificationPermission: 'granted' },
+  });
 
   return {
     name: 'webtabinal-app-test-mocks',
@@ -158,6 +176,16 @@ function mockModules(hooks: HookHarness, api: object, emitSessions = false): Plu
       return modules.get(source);
     },
   };
+}
+
+type NotifyHarness = {
+  shown: Array<{ sid: string; title: string; body: string }>;
+  notificationPermission: string;
+  socketOptions: { onMessage: (message: unknown) => void };
+};
+
+function harness(): NotifyHarness {
+  return (globalThis as typeof globalThis & { __webtabinalAppTest: NotifyHarness }).__webtabinalAppTest;
 }
 
 test('latest failed color scheme change rolls back to the server-confirmed scheme', async (t) => {
@@ -603,6 +631,7 @@ test('missing notification permission keeps unread state and native activation s
   t.after(async () => {
     await server.close();
   });
+  harness().notificationPermission = 'denied';
 
   Object.assign(globalThis, {
     document: { hasFocus: () => true, title: '', activeElement: null },
@@ -671,6 +700,93 @@ test('missing notification permission keeps unread state and native activation s
   assert.equal(view.activeId, 'b');
   assert.equal(view.unread.has('b'), false);
   assert.equal(view.focusSeq, 1, 'activation must use the normal selection path and restore terminal focus');
+});
+
+test('banner-suppressed notify marks the tab unread without raising a notification', async (t) => {
+  const hooks = new HookHarness();
+  const cfg = appConfig('system');
+  cfg.notification.enabled = true;
+  cfg.notification.always = true;
+  const api = {
+    getConfig: async () => cfg,
+    patchConfig: async (patch: Partial<AppConfig>) => ({ ...cfg, ...patch }),
+  };
+  const server = await createServer({
+    configFile: false,
+    logLevel: 'silent',
+    plugins: [mockModules(hooks, api, true), react()],
+    resolve: {
+      alias: [
+        { find: /^react$/, replacement: fileURLToPath(new URL('./app-react-mock.ts', import.meta.url)) },
+        { find: /^react\/jsx-dev-runtime$/, replacement: fileURLToPath(new URL('./app-react-mock.ts', import.meta.url)) },
+        { find: /^react\/jsx-runtime$/, replacement: fileURLToPath(new URL('./app-react-mock.ts', import.meta.url)) },
+      ],
+    },
+    server: { middlewareMode: true },
+  });
+  t.after(async () => {
+    await server.close();
+  });
+
+  Object.assign(globalThis, {
+    document: { hasFocus: () => true, title: '', activeElement: null },
+    window: {
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => true,
+      setTimeout,
+      clearTimeout,
+      close: () => {},
+      focus: () => {},
+    },
+  });
+
+  const { default: App } = await server.ssrLoadModule('/src/App.tsx') as {
+    default: () => { props: { children: Array<{ props?: Record<string, unknown> } | false | null> } };
+  };
+  const render = () => {
+    hooks.beginRender();
+    const tree = App();
+    const children = (tree.props.children as Array<{ props?: Record<string, unknown> } | false | null>)
+      .filter((child): child is { props: Record<string, unknown> } => !!child && typeof child === 'object' && !!child.props);
+    const sidebar = children.find((child) => 'sessions' in child.props);
+    return { unread: sidebar?.props.unread as Set<string> };
+  };
+
+  render();
+  for (const effect of hooks.effects) effect();
+  await new Promise(setImmediate);
+  render();
+
+  const { socketOptions } = harness();
+  socketOptions.onMessage({
+    t: 'notify',
+    sid: 'b',
+    title: 'make',
+    body: 'build finished',
+    banner: false,
+  });
+  await new Promise(setImmediate);
+
+  assert.equal(render().unread.has('b'), true, 'a banner-suppressed event must still mark the tab unread');
+  assert.deepEqual(harness().shown, [], 'a banner-suppressed event must not raise a notification');
+
+  socketOptions.onMessage({
+    t: 'notify',
+    sid: 'c',
+    title: 'Codex',
+    body: 'Ready for input',
+    kind: 'agent_idle',
+    source: 'screen',
+  });
+  await new Promise(setImmediate);
+
+  assert.equal(render().unread.has('c'), true);
+  assert.deepEqual(
+    harness().shown.map((request) => [request.sid, request.title, request.body]),
+    [['c', 'Codex', 'Ready for input']],
+    'a frame without the banner flag notifies as before',
+  );
 });
 
 test('agent_state frames update pills without replacing shell state or dropping unread', async (t) => {

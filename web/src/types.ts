@@ -47,6 +47,7 @@ export type StateConfig = {
   quiescence_ms: number;
   bottom_lines: number;
   notify_on_blocked: boolean;
+  notify_agents: string[];
   manifest_dir: string;
 };
 
@@ -86,7 +87,16 @@ export type ServerMsg =
       agent_state_signal: AgentStateSignal | string;
       agent_state_detail?: string;
     }
-  | { t: 'notify'; sid: string; title: string; body: string; kind?: string; source?: string }
+  | {
+      t: 'notify';
+      sid: string;
+      title: string;
+      body: string;
+      kind?: string;
+      source?: string;
+      // false when the daemon restricted this event to the unread mark.
+      banner?: boolean;
+    }
   | { t: 'output'; sid: string; data: string }
   | { t: 'replay'; sid: string; data: string; done: boolean }
   | { t: 'error'; sid?: string; code?: string; message: string };

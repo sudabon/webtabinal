@@ -606,16 +606,20 @@ func TestAttentionDedupeOSCThenScreen(t *testing.T) {
 		arbiter:   notifyarbiter.New(clock),
 		lastAgent: map[string]agentdetect.State{"session": agentdetect.StateWorking},
 	}
-	mgr.SetEngine(agentdetect.New(agentdetect.Options{
+	eng := agentdetect.New(agentdetect.Options{
 		Registry: agentdetect.Load(agentdetect.LoadOptions{DisableLocal: true}),
 		Clock:    clock,
-	}))
+	})
+	mgr.SetEngine(eng)
 	// Install the live session id into the manager via Create so Get() works.
 	live, err := mgr.Create("")
 	if err != nil {
 		t.Fatal(err)
 	}
 	s.ID = live.ID
+	// Resolve an identity so the OSC leg is banner-eligible and consumes the
+	// attention window; otherwise the dedupe under test never engages.
+	eng.OnCommandStart(live.ID, "codex")
 	h.lastAgent[live.ID] = agentdetect.StateWorking
 	drainClient(c)
 
@@ -648,10 +652,18 @@ func TestAttentionDedupeScreenThenOSC(t *testing.T) {
 	store := testConfigStore(t)
 	mgr := session.NewManager(store, log.New(io.Discard, "", 0))
 	t.Cleanup(mgr.Close)
+	eng := agentdetect.New(agentdetect.Options{
+		Registry: agentdetect.Load(agentdetect.LoadOptions{DisableLocal: true}),
+		Clock:    clock,
+	})
+	mgr.SetEngine(eng)
 	live, err := mgr.Create("")
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Resolve an identity so the OSC leg is banner-eligible; a suppressed
+	// banner would not be deduped against the earlier screen event.
+	eng.OnCommandStart(live.ID, "codex")
 	h := &Hub{
 		manager:   mgr,
 		cfg:       store,
