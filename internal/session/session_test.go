@@ -223,6 +223,30 @@ func TestApplyEventShellExitOnlyRecordsTheExitRoute(t *testing.T) {
 	}
 }
 
+// bash's DEBUG trap (and zsh preexec) reports `exit` as a command before the
+// process dies. That OSC arrives even when the EXIT/zshexit hook is missing —
+// stale integration, a user trap that overwrote ours, or a drain timeout —
+// so it must count as a user-requested exit on its own.
+func TestApplyEventExitCommandRecordsShellExited(t *testing.T) {
+	for _, cmd := range []string{"exit", "exit 1", "logout", "builtin exit"} {
+		t.Run(cmd, func(t *testing.T) {
+			s := &Session{State: StateIdle, PromptSeen: true}
+			s.applyEvent(osc.Event{Kind: osc.EventCmdStart, Command: cmd})
+			if !s.ShellExited {
+				t.Fatalf("ShellExited = false for %q, want true", cmd)
+			}
+		})
+	}
+}
+
+func TestApplyEventOrdinaryCommandDoesNotRecordShellExited(t *testing.T) {
+	s := &Session{State: StateIdle, PromptSeen: true}
+	s.applyEvent(osc.Event{Kind: osc.EventCmdStart, Command: "false"})
+	if s.ShellExited {
+		t.Fatal("ShellExited = true for false, want false")
+	}
+}
+
 func TestApplyEventPromptMarksPromptSeen(t *testing.T) {
 	s := &Session{State: StateStarting}
 

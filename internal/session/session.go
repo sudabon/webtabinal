@@ -428,6 +428,9 @@ func (s *Session) applyEvent(ev osc.Event) {
 		if ev.Command != "" {
 			s.Command = ev.Command
 		}
+		if isUserShellExitCommand(ev.Command) {
+			s.ShellExited = true
+		}
 		s.State = StateRunning
 		s.RunStarted = time.Now()
 		s.ExitCode = nil
@@ -453,6 +456,24 @@ func (s *Session) applyEvent(ev osc.Event) {
 		// the tab-close decision is the only consumer of this flag.
 		s.ShellExited = true
 	}
+}
+
+// isUserShellExitCommand reports whether cmd is the shell terminating itself
+// (`exit`, `logout`, optionally via `builtin`). The DEBUG/preexec OSC carries
+// this before the process is reaped, so it is available even when the later
+// EXIT/zshexit signal never arrives.
+func isUserShellExitCommand(cmd string) bool {
+	cmd = strings.TrimSpace(cmd)
+	switch cmd {
+	case "exit", "logout", "builtin exit", "builtin logout":
+		return true
+	}
+	for _, prefix := range []string{"exit ", "logout ", "builtin exit ", "builtin logout "} {
+		if strings.HasPrefix(cmd, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Session) Write(data []byte) error {
