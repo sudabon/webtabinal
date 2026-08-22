@@ -118,6 +118,7 @@ export default function App() {
 
   const toggleSidebar = useCallback(() => {
     setSidebarCollapsed((collapsed) => !collapsed);
+    setFocusSeq((n) => n + 1);
   }, []);
 
   const armPending = useCallback(() => {

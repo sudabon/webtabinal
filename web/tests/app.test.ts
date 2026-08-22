@@ -1004,11 +1004,20 @@ async function bootChordApp(
       .filter((child): child is { props: Record<string, unknown> } => !!child && typeof child === 'object' && !!child.props);
     const sidebar = children.find((child) => 'sessions' in child.props);
     const pending = children.find((child) => child.props.className === 'chord-pending');
+    const main = children.find((child) => child.props.className === 'main');
+    const mainChildren = (Array.isArray(main?.props.children) ? main.props.children : [main?.props.children])
+      .filter((child): child is { props: Record<string, unknown> } => !!child && typeof child === 'object' && !!child.props);
+    const expand = mainChildren.find((child) => child.props['aria-label'] === 'サイドバーを開く');
+    const terminal = mainChildren.find((child) => 'focusSeq' in child.props);
     return {
-      activeId: sidebar?.props.activeId as string | null | undefined,
+      activeId: (sidebar?.props.activeId ?? terminal?.props.sessionId) as string | null | undefined,
       sessions: sidebar?.props.sessions as Array<{ id: string }> | undefined,
       onOpenSettings: sidebar?.props.onOpenSettings as (() => void) | undefined,
+      onCollapse: sidebar?.props.onCollapse as (() => void) | undefined,
       pending: pending?.props.children,
+      sidebarVisible: !!sidebar,
+      onExpand: expand?.props.onClick as (() => void) | undefined,
+      focusSeq: terminal?.props.focusSeq as number | undefined,
     };
   };
 
@@ -1017,8 +1026,9 @@ async function bootChordApp(
   await new Promise(setImmediate);
   const view = render();
   const capture = listeners.filter((listener) => listener.type === 'keydown' && listener.capture);
+  const bubble = listeners.filter((listener) => listener.type === 'keydown' && !listener.capture);
   assert.equal(capture.length, 1, 'expected one capture-phase keydown listener');
-  return { render, capture: capture[0].fn, view };
+  return { render, capture: capture[0].fn, bubble: bubble[0]?.fn, view };
 }
 
 test('enabled prefix chord is consumed and moves to the neighbouring session', async (t) => {
@@ -1064,6 +1074,42 @@ test('disabled bindings forward the prefix key', async (t) => {
   capture(prefix);
   assert.equal(prefix.defaultPrevented, false);
   assert.equal(prefix.stopped, false);
+});
+
+test('sidebar collapse hides the tab list, expands again, and requests terminal focus', async (t) => {
+  const { render } = await bootChordApp(t, DEFAULT_KEY_BINDINGS);
+  let view = render();
+  assert.equal(view.sidebarVisible, true);
+  assert.equal(view.onExpand, undefined);
+  assert.equal(view.focusSeq, 0);
+  assert.equal(typeof view.onCollapse, 'function', 'expanded sidebar must expose onCollapse');
+
+  view.onCollapse?.();
+  view = render();
+  assert.equal(view.sidebarVisible, false, 'collapse must unmount the sidebar');
+  assert.equal(typeof view.onExpand, 'function', 'collapsed pane must show the expand control');
+  assert.equal(view.focusSeq, 1, 'collapsing must request terminal focus');
+  assert.equal(view.activeId, 'a');
+
+  view.onExpand?.();
+  view = render();
+  assert.equal(view.sidebarVisible, true);
+  assert.equal(view.onExpand, undefined);
+  assert.equal(view.focusSeq, 2, 'expanding must request terminal focus');
+});
+
+test('Cmd+2 still switches tabs while the sidebar is collapsed', async (t) => {
+  const { render, bubble } = await bootChordApp(t, DEFAULT_KEY_BINDINGS);
+  assert.equal(typeof bubble, 'function', 'expected a bubble-phase keydown listener');
+  render().onCollapse?.();
+  let view = render();
+  assert.equal(view.sidebarVisible, false);
+
+  const event = keyEvent({ key: '2', metaKey: true });
+  bubble?.(event);
+  view = render();
+  assert.equal(view.activeId, 'b');
+  assert.equal(event.defaultPrevented, true);
 });
 
 test('chord listener is inert while settings are open or a text field is focused', async (t) => {

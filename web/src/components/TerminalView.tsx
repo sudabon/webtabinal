@@ -87,8 +87,8 @@ export function TerminalView({
         sixelSupport: true,
         iipSupport: true,
       }));
-    } catch {
-      /* image protocols unavailable (WASM/CSP) */
+    } catch (err) {
+      console.warn('webtabinal: ImageAddon unavailable', err);
     }
     fit.fit();
     termRef.current = term;

@@ -27,6 +27,10 @@ test('App requests terminal focus on tab select and new tab, not memo edit', () 
   assert.ok(createTab, 'createTab() must exist');
   assert.match(createTab[0], /setFocusSeq/, 'new tab must request focus');
 
+  const toggleSidebar = app.match(/const toggleSidebar = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]*\]\);/);
+  assert.ok(toggleSidebar, 'toggleSidebar() must exist');
+  assert.match(toggleSidebar[0], /setFocusSeq/, 'sidebar toggle must request terminal focus');
+
   const editMemo = app.match(/onEditMemo=\{\(id\) => \{[\s\S]*?\}\}/);
   assert.ok(editMemo, 'onEditMemo must exist');
   assert.doesNotMatch(editMemo[0], /setFocusSeq/, 'memo edit must not request terminal focus');
