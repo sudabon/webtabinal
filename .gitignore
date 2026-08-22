@@ -26,3 +26,6 @@ internal/static/dist/*
 .cursorrules
 .cursorignore
 .cursorindexingignore
+
+# Local browser snapshots from Playwright MCP
+.playwright-mcp/

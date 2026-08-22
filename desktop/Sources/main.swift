@@ -169,6 +169,12 @@ final class AppDelegate: NSObject,
         copyItem.target = self
         let pasteItem = editMenu.addItem(withTitle: "Paste", action: #selector(pasteFromWeb(_:)), keyEquivalent: "v")
         pasteItem.target = self
+        let toggleSidebarItem = editMenu.addItem(
+            withTitle: "Toggle Sidebar",
+            action: #selector(toggleSidebarFromWeb(_:)),
+            keyEquivalent: ""
+        )
+        toggleSidebarItem.target = self
 
         NSApp.mainMenu = mainMenu
     }
@@ -295,6 +301,11 @@ final class AppDelegate: NSObject,
 
     @objc func pasteFromWeb(_ sender: Any?) {
         pasteFromPasteboard()
+    }
+
+    @objc func toggleSidebarFromWeb(_ sender: Any?) {
+        guard webView != nil else { return }
+        webView.evaluateJavaScript("window.__webtabinalSidebar && window.__webtabinalSidebar.toggle()")
     }
 
     private func copySelectionToPasteboard() {

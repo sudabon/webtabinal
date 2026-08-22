@@ -3,6 +3,7 @@ export type KeyBindings = {
   prefix: string;
   next_tab: string;
   prev_tab: string;
+  toggle_sidebar: string;
 };
 
 export const DEFAULT_KEY_BINDINGS: KeyBindings = {
@@ -10,18 +11,19 @@ export const DEFAULT_KEY_BINDINGS: KeyBindings = {
   prefix: 'ctrl+j',
   next_tab: 'n',
   prev_tab: 'p',
+  toggle_sidebar: 'j',
 };
 
 export const CHORD_TIMEOUT_MS = 3000;
 
 export type BindingIssue =
   | 'prefix_no_modifier'
-  | 'next_prev_equal'
+  | 'duplicate_action_key'
   | 'escape'
   | 'unparsable'
   | 'reserved';
 
-export type ChordAction = 'none' | 'arm' | 'next' | 'prev' | 'cancel';
+export type ChordAction = 'none' | 'arm' | 'next' | 'prev' | 'toggle_sidebar' | 'cancel';
 
 export type ChordResolution = {
   pending: boolean;
@@ -108,10 +110,19 @@ export function validateBindings(bindings: KeyBindings): BindingIssue | null {
   const prefix = parseBinding(bindings.prefix);
   const next = parseBinding(bindings.next_tab);
   const prev = parseBinding(bindings.prev_tab);
-  if (!prefix || !next || !prev) return 'unparsable';
-  if (prefix.key === 'escape' || next.key === 'escape' || prev.key === 'escape') return 'escape';
+  const toggle = parseBinding(bindings.toggle_sidebar);
+  if (!prefix || !next || !prev || !toggle) return 'unparsable';
+  if (prefix.key === 'escape' || next.key === 'escape' || prev.key === 'escape' || toggle.key === 'escape') {
+    return 'escape';
+  }
   if (prefix.mods.length === 0) return 'prefix_no_modifier';
-  if (bindings.next_tab === bindings.prev_tab) return 'next_prev_equal';
+  if (
+    bindings.next_tab === bindings.prev_tab
+    || bindings.next_tab === bindings.toggle_sidebar
+    || bindings.prev_tab === bindings.toggle_sidebar
+  ) {
+    return 'duplicate_action_key';
+  }
   if (RESERVED_PREFIXES.has(bindings.prefix)) return 'reserved';
   return null;
 }
@@ -128,6 +139,7 @@ export function resolveChordKey(
   if (spec === 'escape') return { pending: false, action: 'cancel' };
   if (spec === bindings.next_tab) return { pending: false, action: 'next' };
   if (spec === bindings.prev_tab) return { pending: false, action: 'prev' };
+  if (spec === bindings.toggle_sidebar) return { pending: false, action: 'toggle_sidebar' };
   return { pending: false, action: 'cancel' };
 }
 

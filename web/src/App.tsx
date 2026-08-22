@@ -1,3 +1,4 @@
+import { PanelLeftOpen } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api';
 import { bootErrorMessage, loadInitialConfig } from './boot';
@@ -65,6 +66,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [memoSessionId, setMemoSessionId] = useState<string | null>(null);
   const [pendingPrefix, setPendingPrefix] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [focusSeq, setFocusSeq] = useState(0);
   const prevCount = useRef<number | null>(null);
   const bootstrapped = useRef(false);
@@ -112,6 +114,11 @@ export default function App() {
     }
     pendingPrefixRef.current = false;
     setPendingPrefix(false);
+  }, []);
+
+  const toggleSidebar = useCallback(() => {
+    setSidebarCollapsed((collapsed) => !collapsed);
+    setFocusSeq((n) => n + 1);
   }, []);
 
   const armPending = useCallback(() => {
@@ -420,6 +427,10 @@ export default function App() {
         return;
       }
       clearPending();
+      if (result.action === 'toggle_sidebar') {
+        toggleSidebar();
+        return;
+      }
       if (result.action !== 'next' && result.action !== 'prev') return;
       const list = sessionsRef.current;
       const activeIndex = list.findIndex((s) => s.id === activeRef.current);
@@ -429,7 +440,15 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [armPending, clearPending, select]);
+  }, [armPending, clearPending, select, toggleSidebar]);
+
+  useEffect(() => {
+    const facade = { toggle: toggleSidebar };
+    window.__webtabinalSidebar = facade;
+    return () => {
+      if (window.__webtabinalSidebar === facade) delete window.__webtabinalSidebar;
+    };
+  }, [toggleSidebar]);
 
   const width = config?.sidebar_width ?? 240;
 
@@ -599,39 +618,52 @@ export default function App() {
           </button>
         </div>
       )}
-      <Sidebar
-        sessions={sessions}
-        activeId={activeId}
-        width={width}
-        unread={unread}
-        memoEditorOpen={memoSessionId != null}
-        onSelect={select}
-        onEditMemo={(id) => {
-          setActiveId(id);
-          setMemoSessionId(id);
-        }}
-        onNew={() => void createTab()}
-        onOpenSettings={() => setSettingsOpen(true)}
-        onReorder={(ids) => {
-          void api.reorderSessions(ids).catch(reportActionError);
-        }}
-        onDuplicate={(id) => {
-          void api
-            .duplicateSession(id)
-            .then((s) => setActiveId(s.id))
-            .catch(reportActionError);
-        }}
-        onRestart={(id) => {
-          void api
-            .restartSession(id)
-            .then((s) => setActiveId(s.id))
-            .catch(reportActionError);
-        }}
-        onClose={(id) => void closeTab(id)}
-        onResizeWidth={onResizeWidth}
-        onResizeWidthCommit={(w) => void onResizeWidthCommit(w)}
-      />
+      {!sidebarCollapsed && (
+        <Sidebar
+          sessions={sessions}
+          activeId={activeId}
+          width={width}
+          unread={unread}
+          memoEditorOpen={memoSessionId != null}
+          onSelect={select}
+          onEditMemo={(id) => {
+            setActiveId(id);
+            setMemoSessionId(id);
+          }}
+          onNew={() => void createTab()}
+          onOpenSettings={() => setSettingsOpen(true)}
+          onReorder={(ids) => {
+            void api.reorderSessions(ids).catch(reportActionError);
+          }}
+          onDuplicate={(id) => {
+            void api
+              .duplicateSession(id)
+              .then((s) => setActiveId(s.id))
+              .catch(reportActionError);
+          }}
+          onRestart={(id) => {
+            void api
+              .restartSession(id)
+              .then((s) => setActiveId(s.id))
+              .catch(reportActionError);
+          }}
+          onClose={(id) => void closeTab(id)}
+          onResizeWidth={onResizeWidth}
+          onResizeWidthCommit={(w) => void onResizeWidthCommit(w)}
+          onCollapse={toggleSidebar}
+        />
+      )}
       <main className="main">
+        {sidebarCollapsed && (
+          <button
+            type="button"
+            className="sidebar-expand"
+            aria-label="サイドバーを開く"
+            onClick={toggleSidebar}
+          >
+            <PanelLeftOpen size={16} strokeWidth={2} aria-hidden />
+          </button>
+        )}
         <TerminalView
           sessionId={activeId}
           socket={socket}

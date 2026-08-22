@@ -4,7 +4,7 @@
 TBD - created by archiving change lterm-v01. Update Purpose after archive.
 ## Requirements
 ### Requirement: Left sidebar layout without top tab bar
-The UI SHALL use a left sidebar (default width 240px, resizable 160–480px, width persisted in config) and a right terminal pane. There SHALL be no top tab bar. A New Tab control SHALL sit at the bottom of the sidebar. `document.title` SHALL be `<dirname> — WebTabinal` for the active session. The default terminal font family SHALL be `Menlo, Monaco, 'Courier New', monospace` (VS Code macOS default) with font size 14.
+The UI SHALL use a left sidebar (default width 240px, resizable 160–480px, width persisted in config, collapsible) and a right terminal pane. There SHALL be no top tab bar. A New Tab control SHALL sit at the bottom of the sidebar. `document.title` SHALL be `<dirname> — WebTabinal` for the active session. The default terminal font family SHALL be `Menlo, Monaco, 'Courier New', monospace` (VS Code macOS default) with font size 14.
 
 #### Scenario: Sidebar width persists
 - **WHEN** the user drags the sidebar to 320px
@@ -13,6 +13,10 @@ The UI SHALL use a left sidebar (default width 240px, resizable 160–480px, wid
 #### Scenario: Title reflects active directory
 - **WHEN** the active session CWD basename is `aiwatch`
 - **THEN** `document.title` is `aiwatch — WebTabinal`
+
+#### Scenario: Title is unaffected by collapsing
+- **WHEN** the sidebar is collapsed
+- **THEN** `document.title` still names the active session directory
 
 ### Requirement: Three-row tab presentation
 Each tab SHALL show: (1) bold CWD basename (`~` for home), (2) command line (running = live; idle = previous command at 50% opacity; never-run = shell name) with ellipsis and hover tooltip, (3) state indicator (`running` with elapsed time, `idle`, or `exit <code>` with non-zero in red). The active tab SHALL be highlighted. Non-active tabs SHALL show an unread completion dot until opened.
@@ -26,7 +30,7 @@ Each tab SHALL show: (1) bold CWD basename (`~` for home), (2) command line (run
 - **THEN** the bottom row shows a running indicator including `1:23`
 
 ### Requirement: Tab interactions and shortcuts
-Click SHALL switch sessions. Drag-and-drop SHALL reorder and commit via the order API. New tab SHALL append at the bottom with CWD `~`. Context menu SHALL offer duplicate, restart (exited only), and close. Keyboard: `Cmd+1..9` switches by order; new tab uses `Cmd+N` (sidebar New Tab remains available if the browser/PWA intercepts the shortcut); a configurable prefix chord (default `Ctrl+J` then `n` / `p`, disabled by default) moves to the next / previous tab as specified by `keyboard-shortcuts`. Terminal container resize SHALL send WS `resize`. xterm.js SHALL use fit, webgl (canvas fallback), search, web-links; configurable scrollback (default 10000) and font; Japanese IME supported; `copy_on_select` default off; Cmd+C copies when there is a selection.
+Click SHALL switch sessions. Drag-and-drop SHALL reorder and commit via the order API. New tab SHALL append at the bottom with CWD `~`. Context menu SHALL offer duplicate, restart (exited only), and close. Keyboard: `Cmd+1..9` switches by order; new tab uses `Cmd+N` (sidebar New Tab remains available if the browser/PWA intercepts the shortcut); a configurable prefix chord (default `Ctrl+J` then `n` / `p`, disabled by default) moves to the next / previous tab as specified by `keyboard-shortcuts`. Terminal container resize SHALL send WS `resize`. xterm.js SHALL use fit, webgl (canvas fallback), search, web-links, image; configurable scrollback (default 10000) and font; Japanese IME supported; `copy_on_select` default off; Cmd+C copies when there is a selection.
 
 #### Scenario: Drag reorder commits order
 - **WHEN** the user drops a tab to a new position
@@ -39,6 +43,10 @@ Click SHALL switch sessions. Drag-and-drop SHALL reorder and commit via the orde
 #### Scenario: Prefix chord switches to the neighbouring tab
 - **WHEN** the tab navigation shortcut is enabled and the user presses the prefix key then the next-tab key
 - **THEN** the session below the active one in sidebar order becomes active and attached, and neither keystroke is written to the PTY
+
+#### Scenario: Image addon is loaded with the other addons
+- **WHEN** a terminal view is created
+- **THEN** the image addon is loaded together with fit, search, and web-links
 
 ### Requirement: Empty state and bootstrap tab
 When session count is zero in a non-quit path (or close failed), the UI SHALL show an empty state with a New Tab action. On startup, if there are zero sessions, the client SHALL create one session automatically.
@@ -198,4 +206,102 @@ Working-state motion SHALL animate only compositor-friendly properties and SHALL
 #### Scenario: Blocked state does not flash
 - **WHEN** an agent remains blocked
 - **THEN** its attention treatment remains readable without a continuous flashing animation
+
+### Requirement: Sidebar collapse and expand
+
+The UI SHALL let the user collapse the left sidebar and expand it again. While collapsed, the sidebar and its resizer SHALL NOT occupy horizontal space and the terminal pane SHALL fill the freed width. Collapsing and expanding SHALL resize the terminal so the shell sees the new column count.
+
+#### Scenario: Collapsing widens the terminal
+
+- **WHEN** the sidebar is expanded at 240px and the user collapses it
+- **THEN** the sidebar is no longer laid out, the terminal pane occupies the full window width, and a `resize` is sent for the active session
+
+#### Scenario: Expanding restores the previous width
+
+- **WHEN** the sidebar was collapsed after being resized to 320px and the user expands it
+- **THEN** the sidebar is shown again at 320px
+
+#### Scenario: Collapsed sidebar hides the tab list
+
+- **WHEN** the sidebar is collapsed
+- **THEN** no session tab, New Tab control, or settings control from the sidebar is visible
+
+### Requirement: Sidebar collapse is reachable without the keyboard
+
+The UI SHALL provide a pointer-operable collapse control while the sidebar is expanded and a pointer-operable expand control while it is collapsed. The expand control SHALL remain visible over the terminal pane so a collapsed sidebar can always be restored without the keyboard shortcut, which is disabled by default. Both controls SHALL carry an accessible name identifying the action.
+
+#### Scenario: Collapse control is present when expanded
+
+- **WHEN** the sidebar is expanded
+- **THEN** a control that collapses the sidebar is visible and activating it collapses the sidebar
+
+#### Scenario: Expand control is present when collapsed
+
+- **WHEN** the sidebar is collapsed and the keyboard shortcut is disabled
+- **THEN** a control that expands the sidebar is visible over the terminal pane and activating it expands the sidebar
+
+### Requirement: Collapsed state is not persisted
+
+The collapsed or expanded state of the sidebar SHALL live only in the running UI. It SHALL NOT be written to the daemon config, and a reload or a daemon restart SHALL show the sidebar expanded. The persisted sidebar width SHALL be unaffected by collapsing.
+
+#### Scenario: Reload shows the sidebar expanded
+
+- **WHEN** the user collapses the sidebar and then reloads the UI
+- **THEN** the sidebar is expanded
+
+#### Scenario: Collapsing does not overwrite the stored width
+
+- **WHEN** the user resizes the sidebar to 320px, collapses it, and reloads
+- **THEN** the sidebar is expanded at 320px
+
+### Requirement: Terminal image protocol rendering
+
+The terminal SHALL render inline images transmitted by programs over the kitty graphics protocol, Sixel, and the iTerm2 inline image protocol (IIP). Image handling SHALL be provided by the official `@xterm/addon-image`, loaded alongside the existing xterm.js addons; the client SHALL NOT carry its own implementation of any image protocol.
+
+For the kitty graphics protocol the terminal SHALL, at minimum:
+
+- answer a capability query (`a=q`) for the direct transmission medium (`t=d`) with `OK` when the payload is valid, so that programs probing for image support detect the terminal as capable
+- reject a capability query for a transmission medium the client cannot read — shared memory (`t=s`) and file (`t=f`) — with an error response, so that the sending program falls back to direct transmission rather than handing over a path the browser cannot open
+- accept transmit-and-display (`a=T`) of RGB (`f=24`) and RGBA (`f=32`) pixel data, zlib-compressed (`o=z`) and split across chunks (`m=1` … `m=0`)
+- honour `C=1` by leaving the cursor where it was before the image was placed
+- honour delete requests for all images (`d=A`) and for a single image id (`d=I`)
+
+The terminal SHALL report its pixel geometry so that programs can size images: window size in pixels (`CSI 14 t`), cell size in pixels (`CSI 16 t`), and window size in cells (`CSI 18 t`).
+
+The daemon SHALL continue to forward PTY bytes unchanged; image sequences SHALL NOT be parsed, rewritten, or stripped on the server side.
+
+#### Scenario: Capability probe reports image support
+
+- **WHEN** a program writes `ESC _ G i=<id>,a=q,t=d,f=24,s=1,v=1;<base64 of 3 bytes> ESC \` to the PTY
+- **THEN** the terminal replies `ESC _ G i=<id>;OK ESC \`
+
+#### Scenario: Unreadable transmission medium is rejected
+
+- **WHEN** a program queries the shared-memory (`t=s`) or file (`t=f`) transmission medium
+- **THEN** the terminal replies with an error response rather than `OK`, and the program falls back to direct transmission
+
+#### Scenario: Chunked compressed frame is displayed
+
+- **WHEN** a program transmits an RGBA image with `a=T,f=32,o=z,t=d` split into several `m=1` chunks terminated by an `m=0` chunk
+- **THEN** the image is decompressed and drawn in the terminal
+
+#### Scenario: Cursor stays put when C=1 is set
+
+- **WHEN** an image is displayed with `C=1`
+- **THEN** the cursor remains at the position it held before the image was placed
+
+#### Scenario: Delete-all clears displayed images
+
+- **WHEN** a program sends `a=d,d=A`
+- **THEN** every displayed image is removed from the screen
+
+#### Scenario: Pixel geometry is reported
+
+- **WHEN** a program writes `CSI 14 t`
+- **THEN** the terminal replies with its window size in pixels
+
+#### Scenario: terminal-browser starts without the unsupported-terminal error
+
+- **WHEN** the user runs terminal-code or terminal-browser in a WebTabinal session
+- **THEN** the program does not print `This terminal cannot show images, which terminal-browser needs.` and proceeds to render its UI
 

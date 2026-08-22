@@ -479,7 +479,7 @@ func TestSecurityHeadersAreSet(t *testing.T) {
 	headers := map[string]string{
 		"X-Frame-Options":         "DENY",
 		"X-Content-Type-Options":  "nosniff",
-		"Content-Security-Policy": "default-src 'self'; frame-ancestors 'none'; style-src 'self' 'unsafe-inline'",
+		"Content-Security-Policy": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; frame-ancestors 'none'; style-src 'self' 'unsafe-inline'",
 	}
 	for name, want := range headers {
 		if got := rec.Header().Get(name); got != want {

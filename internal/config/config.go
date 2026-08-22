@@ -61,10 +61,11 @@ type RestoreConfig struct {
 }
 
 type KeyBindingsConfig struct {
-	Enabled bool   `json:"enabled"`
-	Prefix  string `json:"prefix"`
-	NextTab string `json:"next_tab"`
-	PrevTab string `json:"prev_tab"`
+	Enabled       bool   `json:"enabled"`
+	Prefix        string `json:"prefix"`
+	NextTab       string `json:"next_tab"`
+	PrevTab       string `json:"prev_tab"`
+	ToggleSidebar string `json:"toggle_sidebar"`
 }
 
 // Color scheme values accepted by Config.ColorScheme.
@@ -133,10 +134,11 @@ func Defaults() Config {
 		CloseTabOnCleanExit: true,
 		ShiftEnterNewline:   true,
 		KeyBindings: KeyBindingsConfig{
-			Enabled: false,
-			Prefix:  "ctrl+j",
-			NextTab: "n",
-			PrevTab: "p",
+			Enabled:       false,
+			Prefix:        "ctrl+j",
+			NextTab:       "n",
+			PrevTab:       "p",
+			ToggleSidebar: "j",
 		},
 	}
 }
@@ -229,6 +231,9 @@ func (s *Store) applyDefaults() {
 	}
 	if s.cfg.KeyBindings.PrevTab == "" {
 		s.cfg.KeyBindings.PrevTab = d.KeyBindings.PrevTab
+	}
+	if s.cfg.KeyBindings.ToggleSidebar == "" {
+		s.cfg.KeyBindings.ToggleSidebar = d.KeyBindings.ToggleSidebar
 	}
 	if s.cfg.State.DebounceMs == 0 {
 		s.cfg.State.DebounceMs = d.State.DebounceMs
@@ -481,6 +486,7 @@ func validateKeyBindings(kb KeyBindingsConfig) error {
 		{name: "prefix", spec: kb.Prefix},
 		{name: "next_tab", spec: kb.NextTab},
 		{name: "prev_tab", spec: kb.PrevTab},
+		{name: "toggle_sidebar", spec: kb.ToggleSidebar},
 	} {
 		mods, key, ok := parseBinding(s.spec)
 		if !ok {
@@ -493,8 +499,8 @@ func validateKeyBindings(kb KeyBindingsConfig) error {
 			return fmt.Errorf("key_bindings.prefix must include a modifier")
 		}
 	}
-	if kb.NextTab == kb.PrevTab {
-		return fmt.Errorf("key_bindings.next_tab and prev_tab must differ")
+	if kb.NextTab == kb.PrevTab || kb.NextTab == kb.ToggleSidebar || kb.PrevTab == kb.ToggleSidebar {
+		return fmt.Errorf("key_bindings.next_tab, prev_tab, and toggle_sidebar must differ")
 	}
 	if _, hit := reservedPrefixes[kb.Prefix]; hit {
 		return fmt.Errorf("key_bindings.prefix conflicts with an existing shortcut")
