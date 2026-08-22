@@ -48,12 +48,23 @@ private func testProbeRequiresWebTabinalSignature() throws {
         "HTTP/1.1 401 Unauthorized\r\n" +
         "X-Frame-Options: DENY\r\n" +
         "X-Content-Type-Options: nosniff\r\n" +
-        "Content-Security-Policy: default-src 'self'; frame-ancestors 'none'; style-src 'self' 'unsafe-inline'\r\n" +
+        "Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; frame-ancestors 'none'; style-src 'self' 'unsafe-inline'\r\n" +
         "Content-Length: 13\r\n" +
         "\r\n" +
         "unauthorized\n"
     ).utf8)
     try expect(isWebTabinalProbeResponse(valid), "valid WebTabinal response must be accepted")
+
+    let staleCSP = Data((
+        "HTTP/1.1 401 Unauthorized\r\n" +
+        "X-Frame-Options: DENY\r\n" +
+        "X-Content-Type-Options: nosniff\r\n" +
+        "Content-Security-Policy: default-src 'self'; frame-ancestors 'none'; style-src 'self' 'unsafe-inline'\r\n" +
+        "Content-Length: 13\r\n" +
+        "\r\n" +
+        "unauthorized\n"
+    ).utf8)
+    try expect(!isWebTabinalProbeResponse(staleCSP), "stale CSP without wasm-unsafe-eval must be rejected")
 
     let unrelated = Data("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n".utf8)
     try expect(!isWebTabinalProbeResponse(unrelated), "unrelated HTTP response must be rejected")
