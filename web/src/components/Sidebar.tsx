@@ -13,7 +13,7 @@ import {
   arrayMove,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Settings } from 'lucide-react';
+import { PanelLeftClose, Settings } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { SessionInfo } from '../types';
@@ -38,6 +38,7 @@ type Props = {
   onClose: (id: string) => void;
   onResizeWidth: (w: number) => void;
   onResizeWidthCommit: (w: number) => void;
+  onCollapse: () => void;
 };
 
 function SortableTab({
@@ -205,6 +206,16 @@ export function Sidebar(props: Props) {
 
   return (
     <aside className="sidebar" style={{ width: props.width }}>
+      <div className="sidebar-header">
+        <button
+          type="button"
+          className="sidebar-collapse"
+          aria-label="サイドバーを閉じる"
+          onClick={props.onCollapse}
+        >
+          <PanelLeftClose size={16} strokeWidth={2} aria-hidden />
+        </button>
+      </div>
       <div className="sidebar-tabs">
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
           <SortableContext items={props.sessions.map((s) => s.id)} strategy={verticalListSortingStrategy}>

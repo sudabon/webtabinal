@@ -377,6 +377,7 @@ test('keyboard settings show current bindings, persist recording, roll back inva
     prefix: 'ctrl+j',
     next_tab: 'n',
     prev_tab: 'p',
+    toggle_sidebar: 'j',
   };
   const onBindingsChange = (bindings: KeyBindings) => {
     committed.push(bindings);
@@ -397,6 +398,7 @@ test('keyboard settings show current bindings, persist recording, roll back inva
   assert.equal(findByAriaLabel(tree, 'プレフィックスキー').props?.children, 'Ctrl+J');
   assert.equal(findByAriaLabel(tree, '次のタブ').props?.children, 'N');
   assert.equal(findByAriaLabel(tree, '前のタブ').props?.children, 'P');
+  assert.equal(findByAriaLabel(tree, 'サイドバー開閉').props?.children, 'J');
   assert.equal(findByAriaLabel(tree, 'タブ移動ショートカット').props?.checked, true);
 
   (findByAriaLabel(tree, '次のタブ').props?.onClick as () => void)();
@@ -406,7 +408,7 @@ test('keyboard settings show current bindings, persist recording, roll back inva
   const capture = listeners.find((listener) => listener.type === 'keydown' && listener.capture);
   assert.ok(capture, 'recording must install a capture listener');
   capture.fn({
-    key: 'j',
+    key: 'm',
     ctrlKey: false,
     altKey: false,
     shiftKey: false,
@@ -418,15 +420,15 @@ test('keyboard settings show current bindings, persist recording, roll back inva
   });
   await new Promise(setImmediate);
   tree = render();
-  assert.equal(findByAriaLabel(tree, '次のタブ').props?.children, 'J');
-  assert.deepEqual(committed, [{ enabled: true, prefix: 'ctrl+j', next_tab: 'j', prev_tab: 'p' }]);
+  assert.equal(findByAriaLabel(tree, '次のタブ').props?.children, 'M');
+  assert.deepEqual(committed, [{ enabled: true, prefix: 'ctrl+j', next_tab: 'm', prev_tab: 'p', toggle_sidebar: 'j' }]);
 
   (findByAriaLabel(tree, '前のタブ').props?.onClick as () => void)();
   tree = render();
   for (const effect of hooks.effects) effect();
   const recapture = listeners.filter((listener) => listener.type === 'keydown' && listener.capture).at(-1);
   recapture?.fn({
-    key: 'j',
+    key: 'm',
     ctrlKey: false,
     altKey: false,
     shiftKey: false,
@@ -439,7 +441,7 @@ test('keyboard settings show current bindings, persist recording, roll back inva
   await new Promise(setImmediate);
   tree = render();
   assert.equal(findByAriaLabel(tree, '前のタブ').props?.children, 'P');
-  assert.equal(walk(tree, (n) => n.props?.role === 'alert')?.props?.children, '次タブと前タブに同じキーは使えません');
+  assert.equal(walk(tree, (n) => n.props?.role === 'alert')?.props?.children, '移動キーとサイドバー開閉キーに同じキーは使えません');
   assert.equal(committed.length, 1);
 
   (findByAriaLabel(tree, 'キー割り当てをリセット').props?.onClick as () => void)();
@@ -448,8 +450,9 @@ test('keyboard settings show current bindings, persist recording, roll back inva
   assert.equal(findByAriaLabel(tree, 'プレフィックスキー').props?.children, 'Ctrl+J');
   assert.equal(findByAriaLabel(tree, '次のタブ').props?.children, 'N');
   assert.equal(findByAriaLabel(tree, '前のタブ').props?.children, 'P');
+  assert.equal(findByAriaLabel(tree, 'サイドバー開閉').props?.children, 'J');
   assert.equal(findByAriaLabel(tree, 'タブ移動ショートカット').props?.checked, true);
-  assert.deepEqual(committed.at(-1), { enabled: true, prefix: 'ctrl+j', next_tab: 'n', prev_tab: 'p' });
+  assert.deepEqual(committed.at(-1), { enabled: true, prefix: 'ctrl+j', next_tab: 'n', prev_tab: 'p', toggle_sidebar: 'j' });
 });
 
 test('notification settings persist immediately and roll back with a visible error', async (t) => {

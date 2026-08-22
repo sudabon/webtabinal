@@ -43,7 +43,7 @@ Next SHALL select the session that follows the active session in sidebar order, 
 
 ### Requirement: Pending prefix state is visible and cancellable
 
-While the pending state is armed, the UI SHALL show an indicator naming the armed prefix. The pending state SHALL be cleared by `Escape`, by a period of inactivity, by the window losing focus, and by opening the settings modal or the tab memo editor. A key that is neither the next-tab key nor the previous-tab key SHALL clear the pending state and SHALL NOT move tabs.
+While the pending state is armed, the UI SHALL show an indicator naming the armed prefix. The pending state SHALL be cleared by `Escape`, by a period of inactivity, by the window losing focus, and by opening the settings modal or the tab memo editor. A key that is neither the next-tab key, the previous-tab key, nor the toggle-sidebar key SHALL clear the pending state, SHALL NOT move tabs, and SHALL NOT change the sidebar.
 
 #### Scenario: Indicator appears while armed
 
@@ -60,10 +60,10 @@ While the pending state is armed, the UI SHALL show an indicator naming the arme
 - **WHEN** the pending state has been armed and the timeout elapses without a further keystroke
 - **THEN** the pending state is cleared and the next keystroke is handled normally
 
-#### Scenario: Unbound key after the prefix does not move tabs
+#### Scenario: Unbound key after the prefix does nothing
 
-- **WHEN** the pending state is armed and the user presses a key that is not bound to next or previous
-- **THEN** the pending state is cleared and the active tab does not change
+- **WHEN** the pending state is armed and the user presses a key that is not bound to next, previous, or toggle-sidebar
+- **THEN** the pending state is cleared, the active tab does not change, and the sidebar does not change
 
 ### Requirement: Navigation reuses tab selection behavior
 
@@ -95,7 +95,7 @@ A binding SHALL be stored as a normalized string of optional modifiers followed 
 
 ### Requirement: Bindings are configurable and persisted
 
-The enabled flag, prefix key, next-tab key, and previous-tab key SHALL be stored in the daemon config and SHALL be editable at runtime. A change SHALL take effect without restarting the daemon or reloading the UI, and SHALL survive a restart.
+The enabled flag, prefix key, next-tab key, previous-tab key, and toggle-sidebar key SHALL be stored in the daemon config and SHALL be editable at runtime. A change SHALL take effect without restarting the daemon or reloading the UI, and SHALL survive a restart. A stored config that predates the toggle-sidebar key SHALL be read as if it carried the default toggle-sidebar key, without discarding the other stored bindings.
 
 #### Scenario: Rebinding takes effect immediately
 
@@ -107,9 +107,14 @@ The enabled flag, prefix key, next-tab key, and previous-tab key SHALL be stored
 - **WHEN** the daemon and UI are restarted after bindings were changed
 - **THEN** the changed bindings are in effect
 
+#### Scenario: Older config gains the default toggle key
+
+- **WHEN** the daemon reads a config whose `key_bindings` has no toggle-sidebar entry
+- **THEN** the toggle-sidebar key is the default `j` and the stored prefix, next-tab, and previous-tab keys are unchanged
+
 ### Requirement: Binding validation
 
-The system SHALL reject a binding set in which: the prefix has no modifier key; the next-tab key and the previous-tab key are equal; any binding is `Escape`; or the prefix equals an existing application shortcut (`Cmd+1`..`Cmd+9`, `Cmd+N`, `Cmd+C`, `Cmd+V`). A rejected set SHALL NOT be persisted, and the previously persisted set SHALL remain in effect.
+The system SHALL reject a binding set in which: the prefix has no modifier key; any two of the next-tab key, the previous-tab key, and the toggle-sidebar key are equal; any binding is `Escape`; or the prefix equals an existing application shortcut (`Cmd+1`..`Cmd+9`, `Cmd+N`, `Cmd+C`, `Cmd+V`). A rejected set SHALL NOT be persisted, and the previously persisted set SHALL remain in effect.
 
 #### Scenario: Prefix without a modifier is rejected
 
@@ -121,6 +126,11 @@ The system SHALL reject a binding set in which: the prefix has no modifier key; 
 - **WHEN** the user tries to set the previous-tab key to the current next-tab key
 - **THEN** the change is rejected, an error is shown, and the previous binding stays in effect
 
+#### Scenario: Toggle key equal to a navigation key is rejected
+
+- **WHEN** the user tries to set the toggle-sidebar key to the current next-tab key
+- **THEN** the change is rejected, an error is shown, and the previous binding stays in effect
+
 #### Scenario: Prefix colliding with an existing shortcut is rejected
 
 - **WHEN** the user tries to set the prefix to `Cmd+N`
@@ -128,15 +138,39 @@ The system SHALL reject a binding set in which: the prefix has no modifier key; 
 
 ### Requirement: Disabled by default and passthrough when disabled
 
-The tab navigation shortcut SHALL be disabled by default, with the default bindings prefix `ctrl+j`, next `n`, previous `p` already populated. While disabled, no keystroke SHALL be intercepted and the prefix key SHALL reach the PTY as before this change.
+The prefix chord SHALL be disabled by default, with the default bindings prefix `ctrl+j`, next `n`, previous `p`, and toggle-sidebar `j` already populated. The enabled flag SHALL govern every chord action, tab navigation and sidebar toggle alike. While disabled, no keystroke SHALL be intercepted and the prefix key SHALL reach the PTY as before this change.
 
 #### Scenario: Default install does not intercept the prefix
 
 - **WHEN** the config has never been changed and the user presses `Ctrl+J` in the terminal
 - **THEN** the PTY receives the control character and no pending state is armed
 
+#### Scenario: Disabled toggle chord reaches the PTY
+
+- **WHEN** the shortcut is disabled and the user presses `Ctrl+J` then `j` in the terminal
+- **THEN** both keystrokes reach the PTY and the sidebar does not change
+
 #### Scenario: Enabling activates the default bindings
 
 - **WHEN** the user enables the shortcut without changing any key
-- **THEN** `Ctrl+J` then `n` moves to the next tab and `Ctrl+J` then `p` moves to the previous tab
+- **THEN** `Ctrl+J` then `n` moves to the next tab, `Ctrl+J` then `p` moves to the previous tab, and `Ctrl+J` then `j` toggles the sidebar
+
+### Requirement: Prefix chord toggles the sidebar
+
+The system SHALL provide a toggle-sidebar key that completes the prefix chord. While the shortcut is enabled and no modal or text field has focus, the prefix keystroke followed by the toggle-sidebar keystroke SHALL collapse the sidebar if it is expanded and expand it if it is collapsed, and neither keystroke SHALL be written to the PTY.
+
+#### Scenario: Prefix then toggle key collapses the sidebar
+
+- **WHEN** the shortcut is enabled with prefix `ctrl+j` and toggle-sidebar `j`, the sidebar is expanded, and the user presses `Ctrl+J` then `j` while the terminal is focused
+- **THEN** the sidebar collapses and neither keystroke is written to the PTY
+
+#### Scenario: Prefix then toggle key expands a collapsed sidebar
+
+- **WHEN** the shortcut is enabled, the sidebar is collapsed, and the user presses the prefix key then the toggle-sidebar key
+- **THEN** the sidebar expands and neither keystroke is written to the PTY
+
+#### Scenario: Toggling keeps terminal focus
+
+- **WHEN** the terminal is focused and the user completes the toggle-sidebar chord
+- **THEN** the terminal still accepts keyboard input without a further click on the terminal pane
 

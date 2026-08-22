@@ -37,14 +37,35 @@ Object.assign(globalThis, {
   window: globalThis,
 });
 
-test('input sends UTF-8 bytes for non-Latin-1 text', () => {
+test('input sends UTF-8 bytes for non-Latin-1 text', async () => {
   FakeWebSocket.instances = [];
   const socket = new TerminalSocket({ onMessage: () => {} });
 
   socket.input('sid', 'あé');
+  await Promise.resolve();
 
   const sent = JSON.parse(FakeWebSocket.instances[0].sent[0]) as { data: string };
   assert.equal(Buffer.from(sent.data, 'base64').toString('utf8'), 'あé');
+  socket.close();
+});
+
+test('kitty probe replies in the same tick share one PTY write', async () => {
+  FakeWebSocket.instances = [];
+  const socket = new TerminalSocket({ onMessage: () => {} });
+
+  socket.input('sid', '\x1b_Gi=4207;OK\x1b\\');
+  socket.input('sid', '\x1b[?62;4;9;22c');
+  assert.equal(FakeWebSocket.instances[0].sent.length, 0);
+  await Promise.resolve();
+
+  assert.equal(FakeWebSocket.instances[0].sent.length, 1);
+  const sent = JSON.parse(FakeWebSocket.instances[0].sent[0]) as { t: string; sid: string; data: string };
+  assert.equal(sent.t, 'input');
+  assert.equal(sent.sid, 'sid');
+  assert.equal(
+    Buffer.from(sent.data, 'base64').toString('binary'),
+    '\x1b_Gi=4207;OK\x1b\\\x1b[?62;4;9;22c',
+  );
   socket.close();
 });
 

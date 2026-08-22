@@ -48,11 +48,15 @@ test('validateBindings accepts the default chord', () => {
 
 test('validateBindings rejects each invalid case', () => {
   assert.equal(validateBindings({ ...enabled, prefix: 'j' }), 'prefix_no_modifier');
-  assert.equal(validateBindings({ ...enabled, next_tab: 'n', prev_tab: 'n' }), 'next_prev_equal');
+  assert.equal(validateBindings({ ...enabled, next_tab: 'n', prev_tab: 'n' }), 'duplicate_action_key');
+  assert.equal(validateBindings({ ...enabled, toggle_sidebar: 'n' }), 'duplicate_action_key');
+  assert.equal(validateBindings({ ...enabled, toggle_sidebar: 'p' }), 'duplicate_action_key');
   assert.equal(validateBindings({ ...enabled, prefix: 'escape' }), 'escape');
   assert.equal(validateBindings({ ...enabled, next_tab: 'escape' }), 'escape');
+  assert.equal(validateBindings({ ...enabled, toggle_sidebar: 'escape' }), 'escape');
   assert.equal(validateBindings({ ...enabled, prefix: 'Ctrl+J' }), 'unparsable');
   assert.equal(validateBindings({ ...enabled, prefix: '' }), 'unparsable');
+  assert.equal(validateBindings({ ...enabled, toggle_sidebar: '' }), 'unparsable');
   assert.equal(validateBindings({ ...enabled, prefix: 'shift+ctrl+j' }), 'unparsable');
   assert.equal(validateBindings({ ...enabled, prefix: 'meta+n' }), 'reserved');
   assert.equal(validateBindings({ ...enabled, prefix: 'meta+1' }), 'reserved');
@@ -64,12 +68,14 @@ test('resolveChordKey implements the prefix state machine', () => {
   assert.deepEqual(resolveChordKey(false, 'ctrl+j', enabled), { pending: true, action: 'arm' });
   assert.deepEqual(resolveChordKey(true, 'n', enabled), { pending: false, action: 'next' });
   assert.deepEqual(resolveChordKey(true, 'p', enabled), { pending: false, action: 'prev' });
+  assert.deepEqual(resolveChordKey(true, 'j', enabled), { pending: false, action: 'toggle_sidebar' });
   assert.deepEqual(resolveChordKey(true, 'x', enabled), { pending: false, action: 'cancel' });
   assert.deepEqual(resolveChordKey(true, 'escape', enabled), { pending: false, action: 'cancel' });
   assert.deepEqual(resolveChordKey(true, 'ctrl+j', enabled), { pending: true, action: 'arm' });
   assert.deepEqual(resolveChordKey(false, 'n', enabled), { pending: false, action: 'none' });
   assert.deepEqual(resolveChordKey(true, null, enabled), { pending: true, action: 'none' });
   assert.deepEqual(resolveChordKey(false, 'ctrl+j', DEFAULT_KEY_BINDINGS), { pending: false, action: 'none' });
+  assert.deepEqual(resolveChordKey(true, 'j', DEFAULT_KEY_BINDINGS), { pending: false, action: 'none' });
 });
 
 test('neighbourTabIndex wraps and no-ops for a single or missing session', () => {

@@ -208,13 +208,13 @@ func TestKeyBindingsDefaultsToDisabledChord(t *testing.T) {
 	if got.Enabled {
 		t.Fatal("Defaults().KeyBindings.Enabled = true, want false")
 	}
-	if got.Prefix != "ctrl+j" || got.NextTab != "n" || got.PrevTab != "p" {
+	if got.Prefix != "ctrl+j" || got.NextTab != "n" || got.PrevTab != "p" || got.ToggleSidebar != "j" {
 		t.Fatalf("Defaults().KeyBindings = %+v", got)
 	}
 
 	store := newTestStore(t)
 	stored := store.Public().KeyBindings
-	if stored.Enabled || stored.Prefix != "ctrl+j" || stored.NextTab != "n" || stored.PrevTab != "p" {
+	if stored.Enabled || stored.Prefix != "ctrl+j" || stored.NextTab != "n" || stored.PrevTab != "p" || stored.ToggleSidebar != "j" {
 		t.Fatalf("first-launch key_bindings = %+v", stored)
 	}
 }
@@ -241,31 +241,48 @@ func TestOlderConfigGainsKeyBindingDefaults(t *testing.T) {
 	if got.KeyBindings.Enabled {
 		t.Fatal("migrated key_bindings.enabled = true, want false")
 	}
-	if got.KeyBindings.Prefix != "ctrl+j" || got.KeyBindings.NextTab != "n" || got.KeyBindings.PrevTab != "p" {
+	if got.KeyBindings.Prefix != "ctrl+j" || got.KeyBindings.NextTab != "n" || got.KeyBindings.PrevTab != "p" || got.KeyBindings.ToggleSidebar != "j" {
 		t.Fatalf("migrated key_bindings = %+v", got.KeyBindings)
+	}
+}
+
+func TestOlderConfigGainsToggleSidebarDefault(t *testing.T) {
+	store := storeWithConfig(t, `{"key_bindings":{"enabled":true,"prefix":"ctrl+k","next_tab":"n","prev_tab":"p"}}`)
+
+	got := store.Public().KeyBindings
+	if !got.Enabled || got.Prefix != "ctrl+k" || got.NextTab != "n" || got.PrevTab != "p" {
+		t.Fatalf("stored key_bindings not preserved: %+v", got)
+	}
+	if got.ToggleSidebar != "j" {
+		t.Fatalf("toggle_sidebar = %q, want the default j", got.ToggleSidebar)
 	}
 }
 
 func TestPatchRejectsInvalidKeyBindings(t *testing.T) {
 	store := newTestStore(t)
 	valid := map[string]any{
-		"enabled":  true,
-		"prefix":   "ctrl+j",
-		"next_tab": "n",
-		"prev_tab": "p",
+		"enabled":        true,
+		"prefix":         "ctrl+j",
+		"next_tab":       "n",
+		"prev_tab":       "p",
+		"toggle_sidebar": "j",
 	}
 	if _, err := store.Patch(map[string]any{"key_bindings": valid}); err != nil {
 		t.Fatal(err)
 	}
 
 	tests := []struct {
-		name  string
-		patch map[string]any
+		name    string
+		patch   map[string]any
+		wantErr string
 	}{
 		{name: "prefix without modifier", patch: map[string]any{"prefix": "j"}},
-		{name: "equal next and prev", patch: map[string]any{"next_tab": "n", "prev_tab": "n"}},
+		{name: "equal next and prev", patch: map[string]any{"next_tab": "n", "prev_tab": "n"}, wantErr: "key_bindings.next_tab, prev_tab, and toggle_sidebar must differ"},
+		{name: "toggle equal to next", patch: map[string]any{"toggle_sidebar": "n"}, wantErr: "key_bindings.next_tab, prev_tab, and toggle_sidebar must differ"},
+		{name: "toggle equal to prev", patch: map[string]any{"toggle_sidebar": "p"}, wantErr: "key_bindings.next_tab, prev_tab, and toggle_sidebar must differ"},
 		{name: "escape prefix", patch: map[string]any{"prefix": "escape"}},
 		{name: "escape next", patch: map[string]any{"next_tab": "escape"}},
+		{name: "escape toggle", patch: map[string]any{"toggle_sidebar": "escape"}},
 		{name: "unparsable prefix", patch: map[string]any{"prefix": "Ctrl+J"}},
 		{name: "empty prefix", patch: map[string]any{"prefix": ""}},
 		{name: "wrong modifier order", patch: map[string]any{"prefix": "shift+ctrl+j"}},
@@ -278,19 +295,24 @@ func TestPatchRejectsInvalidKeyBindings(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			body := map[string]any{
-				"enabled":  true,
-				"prefix":   "ctrl+j",
-				"next_tab": "n",
-				"prev_tab": "p",
+				"enabled":        true,
+				"prefix":         "ctrl+j",
+				"next_tab":       "n",
+				"prev_tab":       "p",
+				"toggle_sidebar": "j",
 			}
 			for k, v := range tt.patch {
 				body[k] = v
 			}
-			if _, err := store.Patch(map[string]any{"key_bindings": body}); err == nil {
+			_, err := store.Patch(map[string]any{"key_bindings": body})
+			if err == nil {
 				t.Fatal("Patch returned nil error")
 			}
+			if tt.wantErr != "" && err.Error() != tt.wantErr {
+				t.Fatalf("error = %q, want %q", err.Error(), tt.wantErr)
+			}
 			got := store.Public().KeyBindings
-			if !got.Enabled || got.Prefix != "ctrl+j" || got.NextTab != "n" || got.PrevTab != "p" {
+			if !got.Enabled || got.Prefix != "ctrl+j" || got.NextTab != "n" || got.PrevTab != "p" || got.ToggleSidebar != "j" {
 				t.Fatalf("stored key_bindings changed after rejection: %+v", got)
 			}
 		})
@@ -301,16 +323,17 @@ func TestPatchKeyBindingsAcceptsValidChord(t *testing.T) {
 	store := newTestStore(t)
 	got, err := store.Patch(map[string]any{
 		"key_bindings": map[string]any{
-			"enabled":  true,
-			"prefix":   "ctrl+shift+a",
-			"next_tab": "j",
-			"prev_tab": "k",
+			"enabled":        true,
+			"prefix":         "ctrl+shift+a",
+			"next_tab":       "n",
+			"prev_tab":       "k",
+			"toggle_sidebar": "b",
 		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !got.KeyBindings.Enabled || got.KeyBindings.Prefix != "ctrl+shift+a" || got.KeyBindings.NextTab != "j" || got.KeyBindings.PrevTab != "k" {
+	if !got.KeyBindings.Enabled || got.KeyBindings.Prefix != "ctrl+shift+a" || got.KeyBindings.NextTab != "n" || got.KeyBindings.PrevTab != "k" || got.KeyBindings.ToggleSidebar != "b" {
 		t.Fatalf("patched key_bindings = %+v", got.KeyBindings)
 	}
 }

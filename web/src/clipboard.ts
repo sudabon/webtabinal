@@ -126,6 +126,7 @@ declare global {
   interface Window {
     __WEBTABINAL_DESKTOP__?: boolean;
     __webtabinalClipboard?: TerminalClipboardFacade;
+    __webtabinalSidebar?: { toggle: () => void };
     webkit?: {
       messageHandlers?: {
         webtabinal?: { postMessage: (message: unknown) => void };

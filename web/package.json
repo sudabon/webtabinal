@@ -7,17 +7,19 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --test --experimental-strip-types tests/*.test.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
-    "@xterm/addon-fit": "^0.11.0",
-    "@xterm/addon-search": "^0.16.0",
-    "@xterm/addon-web-links": "^0.12.0",
-    "@xterm/addon-webgl": "^0.19.0",
-    "@xterm/xterm": "^6.0.0",
+    "@xterm/addon-fit": "0.12.0-beta.299",
+    "@xterm/addon-image": "0.10.0-beta.299",
+    "@xterm/addon-search": "0.17.0-beta.299",
+    "@xterm/addon-web-links": "0.13.0-beta.299",
+    "@xterm/addon-webgl": "0.20.0-beta.298",
+    "@xterm/xterm": "6.1.0-beta.302",
     "lucide-react": "^1.31.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"

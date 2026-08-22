@@ -112,6 +112,7 @@ function mockModules(hooks: HookHarness, api: object, emitSessions = false): Plu
     ['./components/Sidebar', 'export function Sidebar() {}'],
     ['./components/TabMemoModal', 'export function TabMemoModal() {}'],
     ['./components/TerminalView', 'export function TerminalView() {}'],
+    ['lucide-react', 'export function PanelLeftOpen() { return null; }'],
     ['./notification-provider', `
       export const NATIVE_NOTIFICATION_ACTIVATION_EVENT = 'webtabinal-native-notification-activated';
       export function createNotificationProvider() {
@@ -662,7 +663,13 @@ test('missing notification permission keeps unread state and native activation s
       .filter((child): child is { props: Record<string, unknown> } => !!child && typeof child === 'object' && !!child.props);
     const sidebar = children.find((child) => 'sessions' in child.props);
     const main = children.find((child) => child.props.className === 'main');
-    const terminal = main?.props.children as { props?: Record<string, unknown> } | undefined;
+    const mainChildren = main?.props.children as
+      | { props?: Record<string, unknown> }
+      | Array<{ props?: Record<string, unknown> } | false | null>
+      | undefined;
+    const terminal = Array.isArray(mainChildren)
+      ? mainChildren.find((child) => !!child && typeof child === 'object' && child.props && 'focusSeq' in child.props)
+      : mainChildren;
     return {
       activeId: sidebar?.props.activeId as string | null,
       unread: sidebar?.props.unread as Set<string>,

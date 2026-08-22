@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { SearchAddon } from '@xterm/addon-search';
 import { WebglAddon } from '@xterm/addon-webgl';
+import { ImageAddon } from '@xterm/addon-image';
 import '@xterm/xterm/css/xterm.css';
 import { xtermViewOptions, type ResolvedTheme } from '../theme';
 import type { AppConfig } from '../types';
@@ -78,6 +79,16 @@ export function TerminalView({
       } catch {
         /* DOM renderer fallback */
       }
+    }
+    try {
+      term.loadAddon(new ImageAddon({
+        kittySupport: true,
+        enableSizeReports: true,
+        sixelSupport: true,
+        iipSupport: true,
+      }));
+    } catch {
+      /* image protocols unavailable (WASM/CSP) */
     }
     fit.fit();
     termRef.current = term;

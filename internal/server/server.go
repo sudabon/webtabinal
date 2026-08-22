@@ -20,7 +20,7 @@ import (
 
 const (
 	cookieName            = "webtabinal_token"
-	contentSecurityPolicy = "default-src 'self'; frame-ancestors 'none'; style-src 'self' 'unsafe-inline'"
+	contentSecurityPolicy = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; frame-ancestors 'none'; style-src 'self' 'unsafe-inline'"
 )
 
 var ErrAlreadyRunning = errors.New("webtabinal is already listening")

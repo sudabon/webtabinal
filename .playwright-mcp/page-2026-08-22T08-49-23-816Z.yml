@@ -1,0 +1,17 @@
+- generic [ref=f2e3]:
+  - complementary [ref=f2e4]:
+    - button "サイドバーを閉じる" [ref=f2e6] [cursor=pointer]
+    - generic [ref=f2e10]:
+      - button "webtabinal-kitty-VsJY0b node /tmp/kitty-node-probe.mjs 2000 ○ idle" [ref=f2e37]:
+        - generic [ref=f2e28]: webtabinal-kitty-VsJY0b
+        - generic "node /tmp/kitty-node-probe.mjs 2000" [ref=f2e38]
+        - generic [ref=f2e30]: ○ idle
+      - 'button "webtabinal-kitty-VsJY0b echo HOME=$HOME; TODE_ROOT=/Users/suda/.local/lib/tode; HELPER=\"$TODE_ROOT/vendor/terminal-browser/electron/terminal-browser.app/Contents/Frameworks/Electron Helper.app/Contents/MacOS/Electron Helper\"; ELECTRON_RUN_AS_NODE=1 \"$HELPER\" -e ''console.log(JSON.stringify({in:!!process.stdin.isTTY,out:!!process.stdout.isTTY,raw:typeof process.stdin.setRawMode}))'' ○ idle" [ref=f2e51]':
+        - generic [ref=f2e40]: webtabinal-kitty-VsJY0b
+        - 'generic "echo HOME=$HOME; TODE_ROOT=/Users/suda/.local/lib/tode; HELPER=\"$TODE_ROOT/vendor/terminal-browser/electron/terminal-browser.app/Contents/Frameworks/Electron Helper.app/Contents/MacOS/Electron Helper\"; ELECTRON_RUN_AS_NODE=1 \"$HELPER\" -e ''console.log(JSON.stringify({in:!!process.stdin.isTTY,out:!!process.stdout.isTTY,raw:typeof process.stdin.setRawMode}))''" [ref=f2e52]'
+        - generic [ref=f2e42]: ○ idle
+      - status [ref=f2e11]
+    - button "＋ 新規タブ" [ref=f2e12] [cursor=pointer]
+    - button "設定" [ref=f2e13] [cursor=pointer]
+  - main [ref=f2e18]:
+    - textbox "Terminal input" [active] [ref=f2e46]

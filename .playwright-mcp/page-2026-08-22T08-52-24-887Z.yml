@@ -1,0 +1,27 @@
+- generic [ref=f2e3]:
+  - complementary [ref=f2e4]:
+    - button "サイドバーを閉じる" [ref=f2e6] [cursor=pointer]
+    - generic [ref=f2e10]:
+      - button "webtabinal-kitty-VsJY0b node /tmp/kitty-node-probe.mjs 2000 ○ idle" [ref=f2e37]:
+        - generic [ref=f2e28]: webtabinal-kitty-VsJY0b
+        - generic "node /tmp/kitty-node-probe.mjs 2000" [ref=f2e38]
+        - generic [ref=f2e30]: ○ idle
+      - button "webtabinal-kitty-VsJY0b sh /tmp/electron-tty-check.sh ○ idle" [ref=f2e53]:
+        - generic [ref=f2e40]: webtabinal-kitty-VsJY0b
+        - generic "sh /tmp/electron-tty-check.sh" [ref=f2e54]
+        - generic [ref=f2e42]: ○ idle
+      - button "webtabinal-kitty-VsJY0b Generic TUI working TODE_INSTALL_ROOT=/Users/suda/.local/lib/tode /Users/suda/.local/bin/tode --timing /tmp ● running 2:09" [ref=f2e76]:
+        - generic [ref=f2e56]:
+          - text: webtabinal-kitty-VsJY0b
+          - generic "Generic TUI working" [ref=f2e77]: working
+        - generic "TODE_INSTALL_ROOT=/Users/suda/.local/lib/tode /Users/suda/.local/bin/tode --timing /tmp" [ref=f2e66]
+        - generic [ref=f2e58]: ● running 2:09
+      - button "webtabinal-kitty-VsJY0b zsh ○ idle" [ref=f2e79]:
+        - generic [ref=f2e80]: webtabinal-kitty-VsJY0b
+        - generic "zsh" [ref=f2e81]
+        - generic [ref=f2e82]: ○ idle
+      - status [ref=f2e11]
+    - button "＋ 新規タブ" [ref=f2e12] [cursor=pointer]
+    - button "設定" [ref=f2e13] [cursor=pointer]
+  - main [ref=f2e18]:
+    - textbox "Terminal input" [active] [ref=f2e86]

@@ -1,0 +1,8 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - button "サイドバーを閉じる" [ref=e6] [cursor=pointer]
+    - status [ref=e11]
+    - button "＋ 新規タブ" [ref=e12] [cursor=pointer]
+    - button "設定" [ref=e13] [cursor=pointer]
+  - main [ref=e18]:
+    - textbox "Terminal input" [active] [ref=e24]

@@ -22,6 +22,9 @@ export class TerminalSocket {
   private timer: number | null = null;
   private attached: string | null = null;
   private lastSize: { cols: number; rows: number } | null = null;
+  private inputSid: string | null = null;
+  private inputBuf = '';
+  private inputFlushScheduled = false;
 
   constructor(handlers: Handlers) {
     this.handlers = handlers;
@@ -39,6 +42,7 @@ export class TerminalSocket {
     this.ws = ws;
     ws.onopen = () => {
       this.attempt = 0;
+      this.flushInput();
       // Notify before re-attach so UI can reset the terminal before replay arrives.
       this.handlers.onStatus?.(true);
       if (this.attached) {
@@ -79,23 +83,43 @@ export class TerminalSocket {
   }
 
   attach(sid: string) {
+    this.flushInput();
     this.attached = sid;
     this.send({ t: 'attach', sid });
   }
 
   input(sid: string, data: string) {
-    this.send({ t: 'input', sid, data: encodeB64(new TextEncoder().encode(data)) });
+    if (!data) return;
+    if (this.inputSid && this.inputSid !== sid) this.flushInput();
+    this.inputSid = sid;
+    this.inputBuf += data;
+    if (!this.inputFlushScheduled) {
+      this.inputFlushScheduled = true;
+      queueMicrotask(() => this.flushInput());
+    }
   }
 
   resize(sid: string, cols: number, rows: number) {
+    this.flushInput();
     this.lastSize = { cols, rows };
     this.send({ t: 'resize', sid, cols, rows });
   }
 
   close() {
+    this.flushInput();
     this.closed = true;
     if (this.timer) window.clearTimeout(this.timer);
     this.ws?.close();
+  }
+
+  private flushInput() {
+    this.inputFlushScheduled = false;
+    const sid = this.inputSid;
+    const data = this.inputBuf;
+    this.inputSid = null;
+    this.inputBuf = '';
+    if (this.closed || !sid || !data) return;
+    this.send({ t: 'input', sid, data: encodeB64(new TextEncoder().encode(data)) });
   }
 }
 

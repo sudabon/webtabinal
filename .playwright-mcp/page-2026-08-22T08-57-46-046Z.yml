@@ -1,0 +1,33 @@
+- generic [ref=f3e3]:
+  - complementary [ref=f3e4]:
+    - button "サイドバーを閉じる" [ref=f3e6] [cursor=pointer]
+    - generic [ref=f3e10]:
+      - button "webtabinal-kitty-VsJY0b node /tmp/kitty-node-probe.mjs 2000 ○ idle" [ref=f3e11]:
+        - generic [ref=f3e12]: webtabinal-kitty-VsJY0b
+        - generic "node /tmp/kitty-node-probe.mjs 2000" [ref=f3e13]
+        - generic [ref=f3e14]: ○ idle
+      - button "webtabinal-kitty-VsJY0b sh /tmp/electron-tty-check.sh ○ idle" [ref=f3e15]:
+        - generic [ref=f3e16]: webtabinal-kitty-VsJY0b
+        - generic "sh /tmp/electron-tty-check.sh" [ref=f3e17]
+        - generic [ref=f3e18]: ○ idle
+      - button "webtabinal-kitty-VsJY0b Generic TUI idle TODE_INSTALL_ROOT=/Users/suda/.local/lib/tode /Users/suda/.local/bin/tode --timing /tmp ● running 7:26" [ref=f3e19]:
+        - generic [ref=f3e20]:
+          - text: webtabinal-kitty-VsJY0b
+          - generic "Generic TUI idle" [ref=f3e21]: idle
+        - generic "TODE_INSTALL_ROOT=/Users/suda/.local/lib/tode /Users/suda/.local/bin/tode --timing /tmp" [ref=f3e23]
+        - generic [ref=f3e24]: ● running 7:26
+      - button "webtabinal-kitty-VsJY0b Generic TUI idle TERMINAL_BROWSER_SKIP_GRAPHICS_CHECK=1 TODE_INSTALL_ROOT=/Users/suda/.local/lib/tode /Users/suda/.local/bin/tode --timing /var/tmp ● running 4:44" [ref=f3e25]:
+        - generic [ref=f3e26]:
+          - text: webtabinal-kitty-VsJY0b
+          - generic "Generic TUI idle" [ref=f3e27]: idle
+        - generic "TERMINAL_BROWSER_SKIP_GRAPHICS_CHECK=1 TODE_INSTALL_ROOT=/Users/suda/.local/lib/tode /Users/suda/.local/bin/tode --timing /var/tmp" [ref=f3e29]
+        - generic [ref=f3e30]: ● running 4:44
+      - button "webtabinal-kitty-VsJY0b ;816;936tprintf 'a\\nb\\nc\\n' | less ○ idle" [ref=f3e31]:
+        - generic [ref=f3e32]: webtabinal-kitty-VsJY0b
+        - generic ";816;936tprintf 'a\\nb\\nc\\n' | less" [ref=f3e33]
+        - generic [ref=f3e34]: ○ idle
+      - status [ref=f3e35]
+    - button "＋ 新規タブ" [ref=f3e36] [cursor=pointer]
+    - button "設定" [ref=f3e37] [cursor=pointer]
+  - main [ref=f3e42]:
+    - textbox "Terminal input" [active] [ref=f3e48]

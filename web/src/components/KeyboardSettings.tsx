@@ -8,7 +8,7 @@ import {
   type KeyBindings,
 } from '../keymap';
 
-type Slot = 'prefix' | 'next_tab' | 'prev_tab';
+type Slot = 'prefix' | 'next_tab' | 'prev_tab' | 'toggle_sidebar';
 
 type Props = {
   bindings: KeyBindings;
@@ -19,7 +19,7 @@ type Props = {
 
 const ISSUE_MESSAGE: Record<BindingIssue, string> = {
   prefix_no_modifier: 'プレフィックスキーには修飾キー（Ctrl / Alt / Shift / Cmd）が必要です',
-  next_prev_equal: '次タブと前タブに同じキーは使えません',
+  duplicate_action_key: '移動キーとサイドバー開閉キーに同じキーは使えません',
   escape: 'Escape は割り当てできません',
   unparsable: 'このキーは割り当てできません',
   reserved: '既存のショートカット（Cmd+1〜9 / Cmd+N / Cmd+C / Cmd+V）と衝突しています',
@@ -29,7 +29,8 @@ function sameBindings(a: KeyBindings, b: KeyBindings): boolean {
   return a.enabled === b.enabled
     && a.prefix === b.prefix
     && a.next_tab === b.next_tab
-    && a.prev_tab === b.prev_tab;
+    && a.prev_tab === b.prev_tab
+    && a.toggle_sidebar === b.toggle_sidebar;
 }
 
 export function KeyboardSettings({
@@ -148,7 +149,7 @@ export function KeyboardSettings({
       </section>
 
       <section className="settings-section">
-        <h3 className="settings-heading">タブ移動</h3>
+        <h3 className="settings-heading">プレフィックスショートカット</h3>
         <label className={`settings-option ${bindings.enabled ? 'selected' : ''}`}>
           <input
             type="checkbox"
@@ -157,7 +158,7 @@ export function KeyboardSettings({
             onChange={(e) => void commit({ ...bindings, enabled: e.target.checked })}
           />
           <span className="settings-option-label">ショートカットを有効にする</span>
-          <span className="settings-option-hint">プレフィックスのあと n / p で隣のタブへ</span>
+          <span className="settings-option-hint">プレフィックスのあと、隣のタブへ移動したりサイドバーを開閉したりできます</span>
         </label>
 
         <div className="settings-bindings">
@@ -192,6 +193,17 @@ export function KeyboardSettings({
               onClick={() => { setError(null); setRecording('prev_tab'); }}
             >
               {label('prev_tab')}
+            </button>
+          </div>
+          <div className="settings-binding-row">
+            <span>サイドバー開閉</span>
+            <button
+              type="button"
+              className={`settings-binding${recording === 'toggle_sidebar' ? ' recording' : ''}`}
+              aria-label="サイドバー開閉"
+              onClick={() => { setError(null); setRecording('toggle_sidebar'); }}
+            >
+              {label('toggle_sidebar')}
             </button>
           </div>
         </div>
