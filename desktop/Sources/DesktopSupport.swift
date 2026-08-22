@@ -8,8 +8,9 @@ enum ConfigPortError: Error {
     case invalidPort(path: String)
 }
 
+// Must match internal/server/server.go contentSecurityPolicy.
 private let webTabinalContentSecurityPolicy =
-    "default-src 'self'; frame-ancestors 'none'; style-src 'self' 'unsafe-inline'"
+    "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; frame-ancestors 'none'; style-src 'self' 'unsafe-inline'"
 
 func configuredPort(from data: Data, path: String, defaultPort: Int) throws -> Int {
     let json: [String: Any]
