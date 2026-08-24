@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/sudabon/webtabinal/internal/imagedrop"
 	"github.com/sudabon/webtabinal/internal/session"
 	"github.com/sudabon/webtabinal/internal/vtscreen"
 )
@@ -208,4 +209,45 @@ func (s *Server) handleSessionNotify(w http.ResponseWriter, r *http.Request) {
 		s.hub.notifyFromHook(id, body.Title, body.Body, kind)
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleSessionImage stores an image the browser pasted or dropped and returns
+// its path. The path is what actually reaches the agent: Claude Code, Codex,
+// and cursor-agent all read an image from disk, so the client types this path
+// into the PTY the way a native terminal inserts a dropped file's path.
+func (s *Server) handleSessionImage(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.images == nil {
+		http.Error(w, "image store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if s.hub == nil || s.hub.manager == nil {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+	if _, ok := s.hub.manager.Get(id); !ok {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+	// One byte over the cap is enough to reject without buffering the rest.
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, imagedrop.MaxBytes+1))
+	if err != nil {
+		http.Error(w, "image exceeds size limit", http.StatusRequestEntityTooLarge)
+		return
+	}
+	saved, err := s.images.Save(body)
+	switch {
+	case errors.Is(err, imagedrop.ErrTooLarge):
+		http.Error(w, "image exceeds size limit", http.StatusRequestEntityTooLarge)
+		return
+	case errors.Is(err, imagedrop.ErrUnsupportedType):
+		http.Error(w, "unsupported image type", http.StatusUnsupportedMediaType)
+		return
+	case err != nil:
+		s.logger.Printf("session %s image save: %v", id, err)
+		http.Error(w, "image save failed", http.StatusInternalServerError)
+		return
+	}
+	s.logger.Printf("session-image session=%s name=%s bytes=%d", id, saved.Name, saved.Bytes)
+	writeJSON(w, http.StatusCreated, saved)
 }

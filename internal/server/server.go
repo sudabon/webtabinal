@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/sudabon/webtabinal/internal/config"
+	"github.com/sudabon/webtabinal/internal/imagedrop"
 	"github.com/sudabon/webtabinal/internal/paths"
 )
 
@@ -30,8 +31,14 @@ type Server struct {
 	logger    *log.Logger
 	mux       *http.ServeMux
 	hub       *Hub
+	images    *imagedrop.Store
 	boundPort int
 }
+
+// SetImageStore installs the directory that pasted and dropped images are
+// written to. Without one the image endpoint reports 503 rather than guessing
+// a location, which keeps tests and headless callers off the real support dir.
+func (s *Server) SetImageStore(store *imagedrop.Store) { s.images = store }
 
 func New(cfg *config.Store, logger *log.Logger, hub *Hub, static http.Handler) *Server {
 	s := &Server{cfg: cfg, logger: logger, mux: http.NewServeMux(), hub: hub, boundPort: cfg.Get().Port}
@@ -183,6 +190,7 @@ func (s *Server) routes(static http.Handler) {
 	s.mux.HandleFunc("PUT /api/sessions/order", s.handleReorderSessions)
 	s.mux.HandleFunc("GET /api/sessions/{id}/state-snapshot", s.handleStateSnapshot)
 	s.mux.HandleFunc("POST /api/sessions/{id}/notify", s.handleSessionNotify)
+	s.mux.HandleFunc("POST /api/sessions/{id}/images", s.handleSessionImage)
 	s.mux.HandleFunc("GET /api/config", s.handleGetConfig)
 	s.mux.HandleFunc("PATCH /api/config", s.handlePatchConfig)
 	s.mux.HandleFunc("GET /api/ws", s.hub.HandleWS)

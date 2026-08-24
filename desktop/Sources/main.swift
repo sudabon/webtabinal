@@ -344,9 +344,28 @@ final class AppDelegate: NSObject,
 
     private func pasteIntoTerminalFromPasteboard() {
         guard webView != nil else { return }
+        // An image on the pasteboard used to be a silent no-op here, because
+        // the terminal only ever asked for a string. Agents read an image from
+        // disk, so the page uploads it and types back the stored path.
+        if let png = Self.pasteboardImagePNG(NSPasteboard.general) {
+            webView.evaluateJavaScript(
+                clipboardImagePasteJavaScript(base64: png.base64EncodedString(), mime: "image/png")
+            )
+            return
+        }
         guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else { return }
         let literal = javaScriptStringLiteral(text)
         webView.evaluateJavaScript("window.__webtabinalClipboard && window.__webtabinalClipboard.paste(\(literal))")
+    }
+
+    /// Normalizes whatever image the pasteboard holds to PNG. A macOS
+    /// screenshot arrives as TIFF, and the daemon should only ever store one
+    /// predictable format for a paste.
+    private static func pasteboardImagePNG(_ pasteboard: NSPasteboard) -> Data? {
+        if let png = pasteboard.data(forType: .png) { return png }
+        guard let tiff = pasteboard.data(forType: .tiff),
+              let rep = NSBitmapImageRep(data: tiff) else { return nil }
+        return rep.representation(using: .png, properties: [:])
     }
 
     // MARK: - WKNavigationDelegate

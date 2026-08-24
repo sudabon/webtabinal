@@ -14,12 +14,16 @@ export type ClipboardKeyLike = {
 export type TerminalClipboardHost = {
   getSelection: () => string;
   paste: (text: string) => void;
+  // Only the desktop shell reaches this: WKWebView cannot hand JavaScript an
+  // NSPasteboard image, so Swift base64-encodes it and calls pasteImage.
+  pasteImage?: (base64: string, mime: string) => void;
 };
 
 export type TerminalClipboardFacade = {
   focusKind: () => ClipboardFocusKind;
   copyText: () => string;
   paste: (text: string) => void;
+  pasteImage: (base64: string, mime: string) => void;
   insertIntoFocusedField: (text: string) => void;
 };
 
@@ -155,6 +159,9 @@ export function installTerminalClipboardFacade(
     },
     paste: (text: string) => {
       if (text) host.paste(text);
+    },
+    pasteImage: (base64: string, mime: string) => {
+      if (base64) host.pasteImage?.(base64, mime);
     },
     insertIntoFocusedField: (text: string) => {
       const active = target.document?.activeElement ?? (typeof document !== 'undefined' ? document.activeElement : null);

@@ -28,6 +28,17 @@ func ManifestsDir() (string, error) {
 	return filepath.Join(dir, "manifests"), nil
 }
 
+// ImagesDir holds images pasted or dropped into a terminal. They live beside
+// the other app data because an agent may re-read one when a session is
+// resumed, which a system temp directory does not survive.
+func ImagesDir() (string, error) {
+	dir, err := SupportDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "images"), nil
+}
+
 func LogsDir() (string, error) {
 	home, err := Home()
 	if err != nil {

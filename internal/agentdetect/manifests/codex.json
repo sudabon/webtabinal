@@ -13,6 +13,8 @@
       "blocked": [
         {"id": "approval", "pattern": "Allow this command"},
         {"id": "approval-want", "pattern": "Do you want to"},
+        {"id": "approval-would", "pattern": "Would you like to (run the following command|make the following edits|grant these permissions)"},
+        {"id": "approval-choice", "pattern": "^\\s*(›\\s*)?[0-9]+\\.\\s+(Yes|No), "},
         {"id": "waiting-input", "pattern": "waiting for (your )?input"}
       ],
       "working": [
@@ -34,6 +36,6 @@
   "quiescence_ms": 1500,
   "activity_window_ms": 1000,
   "activity_min_bytes": 32,
-  "verified_against": ["synthetic-codex-tui"],
-  "notes": "Patterns are calibrated from reviewed synthetic streams in tests/fixtures/agents/codex/synthetic-codex-tui."
+  "verified_against": ["synthetic-codex-tui", "0.149.0"],
+  "notes": "Patterns are calibrated from reviewed synthetic streams in tests/fixtures/agents/codex/synthetic-codex-tui and from reconstructed codex-cli 0.149.0 approval screens in tests/fixtures/agents/codex/0.149.0. approval-would matches the three approval headers shipped in the 0.149.0 binary; approval-choice anchors on the numbered Yes/No option list, which stays inside the bottom 15 lines even when a long command wraps the header out of view."
 }

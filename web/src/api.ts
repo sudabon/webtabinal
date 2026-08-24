@@ -1,3 +1,4 @@
+import type { SavedImage } from './image-attach';
 import type { AppConfig, AppConfigPatch, SessionInfo } from './types';
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -33,6 +34,14 @@ export const api = {
     req<{ sessions: SessionInfo[] }>('/api/sessions/order', {
       method: 'PUT',
       body: JSON.stringify({ ids }),
+    }),
+  // Raw bytes, not JSON: the daemon sniffs the format itself, so a base64
+  // round-trip would only inflate the upload.
+  uploadSessionImage: (id: string, blob: Blob) =>
+    req<SavedImage>(`/api/sessions/${id}/images`, {
+      method: 'POST',
+      headers: { 'Content-Type': blob.type || 'application/octet-stream' },
+      body: blob,
     }),
   getConfig: () => req<AppConfig>('/api/config'),
   patchConfig: (patch: AppConfigPatch) =>

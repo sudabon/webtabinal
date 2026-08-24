@@ -305,3 +305,44 @@ The daemon SHALL continue to forward PTY bytes unchanged; image sequences SHALL 
 - **WHEN** the user runs terminal-code or terminal-browser in a WebTabinal session
 - **THEN** the program does not print `This terminal cannot show images, which terminal-browser needs.` and proceeds to render its UI
 
+
+### Requirement: Attach an image to the agent's prompt
+
+Coding agents read an image from a filesystem path, so the terminal SHALL turn a pasted or dropped image into a stored file and type that file's path into the session as terminal input, the way a native terminal inserts a dropped file's path. Paths SHALL be backslash-escaped for the characters a shell would otherwise treat as separators, and SHALL be followed by a trailing space. Several images attached at once SHALL be typed as one space-separated run.
+
+Cmd+V SHALL attach an image when the clipboard holds one and SHALL keep pasting text otherwise. Dropping files on the terminal SHALL attach the images among them and ignore the rest. Ctrl+V SHALL continue to reach the PTY untouched, so an agent that reads the native clipboard itself keeps working.
+
+#### Scenario: Dropped image is typed as a path
+
+- **WHEN** the user drops a PNG on the terminal
+- **THEN** the file is stored and its escaped path, followed by a space, is written to the session
+
+#### Scenario: Cmd+V with an image on the clipboard attaches it
+
+- **WHEN** the clipboard holds an image and the user presses Cmd+V while the terminal is focused
+- **THEN** the image is attached as a path instead of the paste being a no-op
+
+#### Scenario: Cmd+V with text still pastes text
+
+- **WHEN** the clipboard holds no image and the user presses Cmd+V
+- **THEN** the clipboard text is written to the session as before
+
+#### Scenario: Dropped non-image files are ignored
+
+- **WHEN** the user drops a text file on the terminal
+- **THEN** nothing is uploaded and nothing is typed
+
+#### Scenario: A failed upload types nothing
+
+- **WHEN** storing a dropped image fails
+- **THEN** no path is typed for it and the remaining images are still attached
+
+#### Scenario: A drag that carries no files is left alone
+
+- **WHEN** a tab-reorder drag passes over the terminal
+- **THEN** the terminal does not claim the drop and shows no drop target
+
+#### Scenario: A file dropped outside the terminal does not navigate
+
+- **WHEN** the user drops a file anywhere else in the window
+- **THEN** the browser does not leave the app to display that file
