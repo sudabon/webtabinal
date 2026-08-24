@@ -358,6 +358,19 @@ private func testForegroundPresentationAndPendingActivation() throws {
     try expect(script.contains("session\\\"\\n1"), "activation session ID must be JSON escaped")
 }
 
+private func testClipboardImagePasteJavaScript() throws {
+    let script = clipboardImagePasteJavaScript(base64: "AAECAw==", mime: "image/png")
+    // JSONSerialization escapes the slash; "image\/png" is the same JS string.
+    try expect(
+        script.contains("__webtabinalClipboard.pasteImage(\"AAECAw==\", \"image\\/png\");"),
+        "paste-image facade call changed"
+    )
+
+    // A payload that would otherwise close the string literal must stay inside it.
+    let hostile = clipboardImagePasteJavaScript(base64: "a\"); alert(1); //", mime: "image/png")
+    try expect(hostile.contains("\\\"); alert(1)"), "base64 must be JSON escaped, not concatenated raw")
+}
+
 try testConfiguredPortDefaultsMissingAndZero()
 try testConfiguredPortValidatesExplicitValues()
 try testProbeRequiresWebTabinalSignature()
@@ -368,4 +381,5 @@ try testNotificationAuthorizationRequestsAlertAndReturnsUpdatedStatus()
 try testNotificationRequestContentAndPermissionGate()
 try testNotificationBridgeValidationAndOperations()
 try testForegroundPresentationAndPendingActivation()
+try testClipboardImagePasteJavaScript()
 print("desktop support tests passed")

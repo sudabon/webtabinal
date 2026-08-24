@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import react from '@vitejs/plugin-react';
 import { createServer, type Plugin } from 'vite';
 
+import type { FakeNode } from './terminal-image-react-mock.ts';
 import type { AppConfig } from '../src/types.ts';
 
 type StateSetter<T> = (next: T | ((current: T) => T)) => void;
@@ -62,6 +63,10 @@ type ImageHarness = {
     onDataHandler: ((data: string) => void) | null;
   }>;
   inputs: Array<{ sid: string; data: string }>;
+  pastes: string[];
+  uploads: Array<{ sid: string; type: string; bytes: number }>;
+  uploadFails: boolean;
+  host: FakeNode | null;
   wsListeners: Array<(event: { detail: unknown }) => void>;
   useWebgl: boolean;
 };
@@ -70,7 +75,7 @@ function imageHarness(): ImageHarness {
   return (globalThis as typeof globalThis & { __imageAddonTest: ImageHarness }).__imageAddonTest;
 }
 
-function mockTerminalView(hooks: HookHarness, useWebgl: boolean): Plugin {
+function mockTerminalView(hooks: HookHarness, useWebgl: boolean, realClipboard: boolean): Plugin {
   const modules = new Map([
     ['../theme', 'export function xtermViewOptions() { return { theme: {}, minimumContrastRatio: 1 }; }'],
     ['../clipboard', `
@@ -80,6 +85,16 @@ function mockTerminalView(hooks: HookHarness, useWebgl: boolean): Plugin {
       export function isTextFieldElement() { return false; }
       export function postDesktopClipboardRead() {}
       export function requestClipboardPaste() {}
+    `],
+    ['../api', `
+      export const api = {
+        async uploadSessionImage(sid, blob) {
+          const h = globalThis.__imageAddonTest;
+          h.uploads.push({ sid, type: blob.type, bytes: blob.size });
+          if (h.uploadFails) throw new Error('upload refused');
+          return { path: '/Users/me/Library/Application Support/WebTabinal/images/' + h.uploads.length + '.png' };
+        },
+      };
     `],
     ['../util', `
       export function openExternalLink() {}
@@ -102,10 +117,18 @@ function mockTerminalView(hooks: HookHarness, useWebgl: boolean): Plugin {
       loaded: [],
       terminals: [],
       inputs: [],
+      pastes: [],
+      uploads: [],
+      uploadFails: false,
+      host: null,
       wsListeners: [],
     },
     __webtabinalAppTest: { hooks },
   });
+
+  // The desktop paste path runs through the real facade; the rest of the suite
+  // keeps the stub so key handling stays out of the way.
+  if (realClipboard) modules.delete('../clipboard');
 
   return {
     name: 'webtabinal-terminal-image-mocks',
@@ -156,7 +179,7 @@ const config: AppConfig = {
 
 async function mountTerminalView(
   t: { after: (fn: () => Promise<void> | void) => void },
-  opts: { throwOnConstruct?: boolean; useWebgl?: boolean } = {},
+  opts: { throwOnConstruct?: boolean; useWebgl?: boolean; realClipboard?: boolean } = {},
 ) {
   const hooks = new HookHarness();
   const reactMock = fileURLToPath(new URL('./terminal-image-react-mock.ts', import.meta.url));
@@ -165,7 +188,7 @@ async function mountTerminalView(
     configFile: false,
     logLevel: 'silent',
     optimizeDeps: { noDiscovery: true, include: [] },
-    plugins: [mockTerminalView(hooks, !!opts.useWebgl), react()],
+    plugins: [mockTerminalView(hooks, !!opts.useWebgl, !!opts.realClipboard), react()],
     resolve: {
       alias: [
         { find: /^react$/, replacement: reactMock },
@@ -197,6 +220,7 @@ async function mountTerminalView(
     },
   };
 
+  (globalThis as typeof globalThis & { __terminalRefNodes?: FakeNode[] }).__terminalRefNodes = [];
   Object.assign(globalThis, {
     document: { activeElement: null },
     window: {
@@ -204,6 +228,7 @@ async function mountTerminalView(
         if (type === 'webtabinal-ws') harness.wsListeners.push(fn);
       },
       removeEventListener: () => {},
+      __WEBTABINAL_DESKTOP__: true,
     },
     ResizeObserver: class {
       observe() {}
@@ -228,8 +253,25 @@ async function mountTerminalView(
     memoOpen: false,
   });
   for (const effect of hooks.effects) effect();
+  const nodes = (globalThis as typeof globalThis & { __terminalRefNodes?: FakeNode[] }).__terminalRefNodes ?? [];
+  harness.host = nodes[nodes.length - 1] ?? null;
   return harness;
 }
+
+function fakeDrop(types: string[], files: Array<{ type: string }>) {
+  let prevented = false;
+  return {
+    event: {
+      dataTransfer: { types, files, dropEffect: '' },
+      relatedTarget: null,
+      preventDefault: () => { prevented = true; },
+    },
+    wasPrevented: () => prevented,
+  };
+}
+
+/** Lets an awaited upload chain settle before the assertions run. */
+const settle = () => new Promise((resolve) => setImmediate(resolve));
 
 test('TerminalView loads ImageAddon after open and the other addons', async (t) => {
   const harness = await mountTerminalView(t, { useWebgl: true });
@@ -266,4 +308,86 @@ test('ImageAddon onData after replay is forwarded to the socket', async (t) => {
   harness.wsListeners[0]({ detail: { t: 'replay', sid: 'sid', data: '', done: true } });
   harness.terminals[0]?.onDataHandler?.('\x1b_Gi=4207;OK\x1b\\');
   assert.deepEqual(harness.inputs, [{ sid: 'sid', data: '\x1b_Gi=4207;OK\x1b\\' }]);
+});
+
+test('dropping images uploads them and types the escaped paths into the terminal', async (t) => {
+  const harness = await mountTerminalView(t);
+  const drop = fakeDrop(['Files'], [{ type: 'image/png' }, { type: 'image/webp' }]);
+  harness.host?.dispatch('drop', drop.event);
+  await settle();
+
+  assert.equal(drop.wasPrevented(), true, 'the browser must not navigate to the dropped file');
+  assert.deepEqual(harness.uploads.map((u) => u.sid), ['sid', 'sid']);
+  // One paste, both paths, the support-directory space escaped, trailing space.
+  assert.deepEqual(harness.pastes, [
+    '/Users/me/Library/Application\\ Support/WebTabinal/images/1.png'
+      + ' /Users/me/Library/Application\\ Support/WebTabinal/images/2.png ',
+  ]);
+});
+
+test('dropping non-image files uploads nothing and types nothing', async (t) => {
+  const harness = await mountTerminalView(t);
+  const drop = fakeDrop(['Files'], [{ type: 'text/plain' }, { type: 'application/pdf' }]);
+  harness.host?.dispatch('drop', drop.event);
+  await settle();
+
+  assert.equal(drop.wasPrevented(), true);
+  assert.deepEqual(harness.uploads, []);
+  assert.deepEqual(harness.pastes, []);
+});
+
+test('a drag without files is left to the rest of the UI', async (t) => {
+  const harness = await mountTerminalView(t);
+  const drop = fakeDrop(['text/plain'], []);
+  harness.host?.dispatch('dragover', drop.event);
+  harness.host?.dispatch('drop', drop.event);
+  await settle();
+
+  assert.equal(drop.wasPrevented(), false, 'tab reorder drags must keep their default');
+  assert.equal(harness.host?.classList.contains('terminal-drop-active'), false);
+  assert.deepEqual(harness.uploads, []);
+});
+
+test('dragging files over the terminal marks it as the drop target until the drop', async (t) => {
+  const harness = await mountTerminalView(t);
+  const drag = fakeDrop(['Files'], [{ type: 'image/png' }]);
+  harness.host?.dispatch('dragover', drag.event);
+  assert.equal(harness.host?.classList.contains('terminal-drop-active'), true);
+  assert.equal(drag.event.dataTransfer.dropEffect, 'copy');
+
+  harness.host?.dispatch('drop', drag.event);
+  await settle();
+  assert.equal(harness.host?.classList.contains('terminal-drop-active'), false);
+});
+
+test('leaving the terminal clears the drop target mark', async (t) => {
+  const harness = await mountTerminalView(t);
+  const drag = fakeDrop(['Files'], [{ type: 'image/png' }]);
+  harness.host?.dispatch('dragover', drag.event);
+  harness.host?.dispatch('dragleave', drag.event);
+  assert.equal(harness.host?.classList.contains('terminal-drop-active'), false);
+});
+
+test('a failed upload types nothing rather than a broken path', async (t) => {
+  const harness = await mountTerminalView(t);
+  harness.uploadFails = true;
+  const drop = fakeDrop(['Files'], [{ type: 'image/png' }]);
+  harness.host?.dispatch('drop', drop.event);
+  await settle();
+
+  assert.equal(harness.uploads.length, 1);
+  assert.deepEqual(harness.pastes, []);
+});
+
+test('the desktop shell can hand a pasteboard image to the same attach path', async (t) => {
+  const harness = await mountTerminalView(t, { realClipboard: true });
+  // AAECAw== is four bytes; the facade is what Swift calls after reading NSPasteboard.
+  const facade = (globalThis as typeof globalThis & {
+    window: { __webtabinalClipboard?: { pasteImage: (b64: string, mime: string) => void } };
+  }).window.__webtabinalClipboard;
+  facade?.pasteImage('AAECAw==', 'image/png');
+  await settle();
+
+  assert.deepEqual(harness.uploads, [{ sid: 'sid', type: 'image/png', bytes: 4 }]);
+  assert.deepEqual(harness.pastes, ['/Users/me/Library/Application\\ Support/WebTabinal/images/1.png ']);
 });

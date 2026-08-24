@@ -70,6 +70,10 @@ Claude Code の `background` パターン（`✻.+still running`）は、ター�
 
 古いバージョンのディレクトリは削除せず、`verified_against` に新しいバージョンを追加します。
 
+Codex `0.149.0` の承認フィクスチャ（`tests/fixtures/agents/codex/0.149.0/`）は**ライブ録画ではなく再構成**です。画面はユーザー提供のスクリーンショットから、文言は同梱バイナリから抽出した文字列（`Would you like to run the following command?` / `... make the following edits?` / `... grant these permissions?`）で突き合わせています。ライブ録画が取れたら差し替えてください。
+
+`exec-approval-wrapped` は、長いコマンドで選択肢が折り返し、見出し行が `bottom_lines: 15` の外へ押し出される画面です。この場合は番号付き選択肢（`approval-choice`）だけが blocked を支えます。見出しパターンだけに寄せた変更を入れると、このフィクスチャが落ちます。
+
 Cursor Agent `2026.08.11-e8db854` は identity、working（activity）、idle、unknown-to-idle について検証済みです。blocked / 承認の検出は**未検証**です。レビュー済みの承認フィクスチャなしに、推測の blocked パターンを追加しないでください。
 
 ### ローカル E2E

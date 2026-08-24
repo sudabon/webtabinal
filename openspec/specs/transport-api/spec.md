@@ -230,3 +230,48 @@ On success the daemon SHALL broadcast the existing `notify` frame for that sessi
 
 - **WHEN** a request omits the token or presents a foreign Origin
 - **THEN** the daemon refuses it with the same status the other API routes use and no frame is broadcast
+
+### Requirement: Authenticated session image upload endpoint
+
+The daemon SHALL expose `POST /api/sessions/{id}/images` on the existing loopback server, requiring the existing token authentication and Host/Origin checks. The request body SHALL be the raw image bytes. The daemon SHALL determine the media type from the bytes themselves, never from the request's `Content-Type`, and SHALL accept only PNG, JPEG, GIF, and WebP. It SHALL reject a body over 10 MiB.
+
+On success it SHALL write the bytes to a file under the images directory and respond with that file's absolute `path`, `name`, `mime`, and `bytes`. The generated name SHALL contain no character that would need shell quoting, because the client types the path straight into the PTY.
+
+#### Scenario: Authenticated upload returns a readable path
+
+- **WHEN** a request carries the valid token, names a live session, and supplies PNG bytes
+- **THEN** the daemon responds with the path of a file holding exactly those bytes
+
+#### Scenario: Media type comes from the bytes
+
+- **WHEN** a request supplies bytes that are not one of the accepted image formats
+- **THEN** the daemon refuses it as an unsupported media type and writes no file, whatever `Content-Type` the request declared
+
+#### Scenario: Oversized upload is refused
+
+- **WHEN** a request body exceeds the size limit
+- **THEN** the daemon refuses it as too large
+
+#### Scenario: Unknown session is refused
+
+- **WHEN** a request names a session that does not exist
+- **THEN** the daemon responds not found and writes no file
+
+#### Scenario: Unauthenticated upload is refused
+
+- **WHEN** a request omits the token or presents a foreign Origin
+- **THEN** the daemon refuses it with the same status the other API routes use and writes no file
+
+### Requirement: Pasted image retention
+
+Images stored by the upload endpoint SHALL live under the application support directory and SHALL be removed once older than seven days. Pruning SHALL run when an image is stored and when the daemon starts, and SHALL delete only files matching the generated name pattern so unrelated files in the same directory survive.
+
+#### Scenario: Stale generated image is pruned
+
+- **WHEN** a stored image is older than the retention window and a prune runs
+- **THEN** that file is deleted
+
+#### Scenario: Unrelated file is left alone
+
+- **WHEN** a file the daemon did not generate sits in the images directory and a prune runs
+- **THEN** that file is still present

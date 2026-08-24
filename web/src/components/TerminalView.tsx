@@ -16,6 +16,14 @@ import {
   postDesktopClipboardRead,
   requestClipboardPaste,
 } from '../clipboard';
+import {
+  attachableImages,
+  blobFromBase64,
+  dragCarriesFiles,
+  readClipboardImage,
+  terminalTextForPaths,
+} from '../image-attach';
+import { api } from '../api';
 import { openExternalLink, shouldUseWebglRenderer } from '../util';
 import { decodeB64Bytes, TerminalSocket } from '../ws';
 import { shouldApplyTerminalFocus } from '../terminal-focus';
@@ -106,10 +114,57 @@ export function TerminalView({
       if (sel) void navigator.clipboard.writeText(sel);
     });
 
+    // Agents take an image only as a path, so the bytes become a file on the
+    // daemon first and the path is then typed in the way a native terminal
+    // types a dropped file's path.
+    const attachImages = async (blobs: Blob[]) => {
+      const sid = attachedRef.current;
+      if (!sid || blobs.length === 0) return;
+      const paths: string[] = [];
+      for (const blob of blobs) {
+        try {
+          paths.push((await api.uploadSessionImage(sid, blob)).path);
+        } catch (err) {
+          console.warn('webtabinal: image attach failed', err);
+        }
+      }
+      const text = terminalTextForPaths(paths);
+      // The session can be switched away while an upload is in flight; the
+      // path belongs to the session it was uploaded for, so drop it.
+      if (text && attachedRef.current === sid) term.paste(text);
+    };
+
     const uninstallClipboard = installTerminalClipboardFacade({
       getSelection: () => term.getSelection(),
       paste: (text) => term.paste(text),
+      pasteImage: (base64, mime) => { void attachImages([blobFromBase64(base64, mime)]); },
     });
+
+    const host = hostRef.current;
+    const setDropActive = (active: boolean) => {
+      host.classList.toggle('terminal-drop-active', active);
+    };
+    const onDragOver = (ev: DragEvent) => {
+      if (!dragCarriesFiles(ev.dataTransfer?.types)) return;
+      ev.preventDefault();
+      if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'copy';
+      setDropActive(true);
+    };
+    const onDragLeave = (ev: DragEvent) => {
+      // Moving between the terminal's own children fires dragleave too.
+      const to = ev.relatedTarget as Node | null;
+      if (to && host.contains(to)) return;
+      setDropActive(false);
+    };
+    const onDrop = (ev: DragEvent) => {
+      if (!dragCarriesFiles(ev.dataTransfer?.types)) return;
+      ev.preventDefault();
+      setDropActive(false);
+      void attachImages(attachableImages(ev.dataTransfer?.files));
+    };
+    host.addEventListener('dragover', onDragOver);
+    host.addEventListener('dragleave', onDragLeave);
+    host.addEventListener('drop', onDrop);
 
     term.attachCustomKeyEventHandler((ev) => {
       const rewritten = shiftEnterSequence(ev, shiftEnterNewlineRef.current);
@@ -132,9 +187,21 @@ export function TerminalView({
         },
         requestPaste: () => {
           requestClipboardPaste(postDesktopClipboardRead, () => {
-            void navigator.clipboard.readText().then((text) => {
-              if (text) term.paste(text);
-            }).catch(() => {});
+            void (async () => {
+              // An image on the clipboard wins: readText() returns nothing for
+              // it, which is why Cmd+V used to be a silent no-op.
+              const image = await readClipboardImage();
+              if (image) {
+                await attachImages([image]);
+                return;
+              }
+              try {
+                const text = await navigator.clipboard.readText();
+                if (text) term.paste(text);
+              } catch {
+                /* clipboard-read refused */
+              }
+            })();
           });
         },
       });
@@ -160,6 +227,9 @@ export function TerminalView({
       onData.dispose();
       onSel.dispose();
       uninstallClipboard();
+      host.removeEventListener('dragover', onDragOver);
+      host.removeEventListener('dragleave', onDragLeave);
+      host.removeEventListener('drop', onDrop);
       ro.disconnect();
       term.dispose();
       termRef.current = null;
@@ -167,6 +237,21 @@ export function TerminalView({
     // Recreate on session switch so queued writes/OSC replies cannot follow the new sid.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
+
+  // A file dropped anywhere but the terminal would otherwise make the browser
+  // navigate to it, replacing the whole app with the image.
+  useEffect(() => {
+    const swallow = (ev: DragEvent) => {
+      if (!dragCarriesFiles(ev.dataTransfer?.types)) return;
+      ev.preventDefault();
+    };
+    window.addEventListener('dragover', swallow);
+    window.addEventListener('drop', swallow);
+    return () => {
+      window.removeEventListener('dragover', swallow);
+      window.removeEventListener('drop', swallow);
+    };
+  }, []);
 
   useEffect(() => {
     if (!shouldApplyTerminalFocus({ settingsOpen, memoOpen })) return;

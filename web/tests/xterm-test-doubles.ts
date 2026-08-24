@@ -4,6 +4,7 @@ type ImageHarness = {
   loaded: string[];
   terminals: FakeTerminal[];
   inputs: Array<{ sid: string; data: string }>;
+  pastes: string[];
   wsListeners: Array<(event: { detail: unknown }) => void>;
   useWebgl: boolean;
 };
@@ -47,7 +48,10 @@ export class FakeTerminal {
   getSelection() {
     return '';
   }
-  paste() {}
+  paste(text: string) {
+    harness().pastes.push(text);
+  }
+
   write(_data: unknown, cb?: () => void) {
     cb?.();
   }

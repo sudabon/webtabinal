@@ -12,6 +12,7 @@ import (
 	"syscall"
 
 	"github.com/sudabon/webtabinal/internal/config"
+	"github.com/sudabon/webtabinal/internal/imagedrop"
 	"github.com/sudabon/webtabinal/internal/integration"
 	"github.com/sudabon/webtabinal/internal/launchd"
 	"github.com/sudabon/webtabinal/internal/logging"
@@ -152,6 +153,19 @@ func runServe() error {
 		logger.Printf("warning: embedded frontend is a placeholder; run `make build` (not `go run` / `go build` alone) before serve")
 	}
 	srv := server.New(cfg, logger, hub, static.Handler())
+	if dir, err := paths.ImagesDir(); err != nil {
+		logger.Printf("warning: pasted images disabled: %v", err)
+	} else {
+		images := imagedrop.New(dir)
+		// Sweep once at boot so a daemon that ran for weeks does not wait for
+		// the next paste to drop images nobody will look at again.
+		if removed, err := images.Prune(); err != nil {
+			logger.Printf("warning: image prune: %v", err)
+		} else if removed > 0 {
+			logger.Printf("pruned %d stale pasted image(s) from %s", removed, dir)
+		}
+		srv.SetImageStore(images)
+	}
 	if err := srv.Run(ctx); err != nil {
 		if errors.Is(err, server.ErrAlreadyRunning) {
 			return nil

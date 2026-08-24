@@ -507,6 +507,15 @@ final class NotificationActivationCoordinator {
     }
 }
 
+/// The call the desktop shell makes after reading an image off NSPasteboard.
+/// WKWebView cannot hand JavaScript raw bytes, so the image travels as base64
+/// and the page turns it back into a Blob before uploading it to the daemon.
+func clipboardImagePasteJavaScript(base64: String, mime: String) -> String {
+    let data = javaScriptStringLiteral(base64)
+    let type = javaScriptStringLiteral(mime)
+    return "window.__webtabinalClipboard && window.__webtabinalClipboard.pasteImage(\(data), \(type));"
+}
+
 func notificationActivationJavaScript(sessionID: String) -> String {
     let literal = javaScriptStringLiteral(sessionID)
     return "window.dispatchEvent(new CustomEvent('webtabinal-native-notification-activated', { detail: \(literal) }));"
