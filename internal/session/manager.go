@@ -424,15 +424,24 @@ func (m *Manager) pollFallback() {
 	changed := false
 	for _, s := range list {
 		info := s.Info()
-		if info.State != StateExited {
-			m.observeForeground(s)
-		}
-		if info.Integrated || info.State == StateExited {
+		if info.State == StateExited {
 			continue
 		}
+		m.observeForeground(s)
+
 		running, name := foregroundInfo(s)
 		before := info.State
-		s.SetFallbackState(running, name)
+		switch {
+		case running && isRemoteClient(name):
+			// A login client hides the far side from both detectors, so the
+			// screen is the only signal left. This runs for integrated
+			// sessions too — see SetRemoteState.
+			s.SetRemoteState(remoteRunning(s.ScreenSnapshot(vtscreen.SnapshotOptions{Buffer: vtscreen.BufferActive})), name)
+		case info.Integrated:
+			// OSC events carry the state; there is nothing to approximate.
+		default:
+			s.SetFallbackState(running, name)
+		}
 		after := s.Info().State
 		if before != after {
 			changed = true
