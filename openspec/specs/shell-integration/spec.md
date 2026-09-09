@@ -54,6 +54,26 @@ If integration is not detected, the daemon SHALL poll about once per second via 
 - **WHEN** a session has `Integrated=false`
 - **THEN** the tab UI shows a non-integrated indicator
 
+### Requirement: Approximate remote command state during a login session
+
+While the foreground process is an interactive login client (`ssh`, `slogin`, `autossh`, `mosh`, `mosh-client`), neither the OSC integration nor the foreground-process poller can observe the remote host, so the daemon SHALL approximate idle vs running from the session screen instead. This approximation SHALL apply to integrated sessions as well, because the local integration is what reported `running` when the client launched. A session SHALL be reported `idle` when the active buffer is the primary buffer and its bottom-most non-blank line ends with a conventional prompt character (`$`, `#`, `%`, `>`, `❯`, `➜`, `»`, `›`), and `running` otherwise. An unreadable screen, an alternate-buffer screen, and an unrecognised prompt SHALL all resolve to `running`. Live CWD SHALL NOT be updated from the remote host.
+
+#### Scenario: Remote prompt returns to idle
+- **WHEN** a session runs `ssh host` and the remote shell is sitting at its prompt
+- **THEN** the session state is reported as `idle` even though the local shell integration reported `running` at command start
+
+#### Scenario: Remote command reports running
+- **WHEN** a remote shell is executing a command, so its bottom-most non-blank line is the echoed command line or its output
+- **THEN** the session state is reported as `running`
+
+#### Scenario: Remote full-screen program reports running
+- **WHEN** a remote command such as `vim` or `top` switches the session to the alternate buffer
+- **THEN** the session state is reported as `running` regardless of the screen text
+
+#### Scenario: Login client command line survives
+- **WHEN** an integrated session's state is approximated while `ssh host` is the foreground process
+- **THEN** the session command string remains the command line reported by OSC rather than the client executable name
+
 ### Requirement: Inject bash OSC integration without a user rc snippet
 
 When the configured shell’s basename is `bash`, the daemon SHALL write `integration.bash` and a bash inject rcfile under Application Support, spawn the session so that rcfile is used as bash `--rcfile`, and load OSC integration without requiring a one-liner in the user’s `~/.bashrc` or profile. The integration script SHALL no-op unless `WEBTABINAL_SESSION_ID` is set. Non-bash shells SHALL NOT use this bash inject path.

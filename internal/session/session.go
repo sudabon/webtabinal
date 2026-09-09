@@ -577,6 +577,36 @@ func (s *Session) SetFallbackState(running bool, cmdName string) {
 	}
 }
 
+// SetRemoteState applies the screen-derived verdict for a session whose
+// foreground is a login client. Unlike SetFallbackState it also runs on
+// integrated sessions, because the local integration is precisely what
+// reported `running` when `ssh` started and it cannot see the far side; its
+// verdict is the one being corrected here.
+func (s *Session) SetRemoteState(running bool, cmdName string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.State == StateExited || s.State == StateStarting {
+		return
+	}
+	if running {
+		if s.State != StateRunning {
+			s.RunStarted = time.Now()
+		}
+		s.State = StateRunning
+	} else {
+		if s.State == StateRunning && !s.RunStarted.IsZero() {
+			s.LastRunMs = time.Since(s.RunStarted).Milliseconds()
+		}
+		s.State = StateIdle
+	}
+	// An integrated session already holds the full command line ("ssh host"),
+	// which beats the bare executable name; only a non-integrated one needs
+	// this filled in.
+	if cmdName != "" && s.Command == "" {
+		s.Command = cmdName
+	}
+}
+
 func (s *Session) Close() error {
 	s.mu.Lock()
 	if s.closed {
