@@ -44,7 +44,7 @@ private func testConfiguredPortValidatesExplicitValues() throws {
 }
 
 private func testProbeRequiresWebTabinalSignature() throws {
-    let valid = Data((
+    let validResponse: String =
         "HTTP/1.1 401 Unauthorized\r\n" +
         "X-Frame-Options: DENY\r\n" +
         "X-Content-Type-Options: nosniff\r\n" +
@@ -52,10 +52,10 @@ private func testProbeRequiresWebTabinalSignature() throws {
         "Content-Length: 13\r\n" +
         "\r\n" +
         "unauthorized\n"
-    ).utf8)
+    let valid = Data(validResponse.utf8)
     try expect(isWebTabinalProbeResponse(valid), "valid WebTabinal response must be accepted")
 
-    let staleCSP = Data((
+    let staleCSPResponse: String =
         "HTTP/1.1 401 Unauthorized\r\n" +
         "X-Frame-Options: DENY\r\n" +
         "X-Content-Type-Options: nosniff\r\n" +
@@ -63,7 +63,7 @@ private func testProbeRequiresWebTabinalSignature() throws {
         "Content-Length: 13\r\n" +
         "\r\n" +
         "unauthorized\n"
-    ).utf8)
+    let staleCSP = Data(staleCSPResponse.utf8)
     try expect(!isWebTabinalProbeResponse(staleCSP), "stale CSP without wasm-unsafe-eval must be rejected")
 
     let unrelated = Data("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n".utf8)
