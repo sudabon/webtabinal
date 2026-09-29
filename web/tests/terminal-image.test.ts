@@ -61,6 +61,7 @@ type ImageHarness = {
   terminals: Array<{
     options: Record<string, unknown>;
     onDataHandler: ((data: string) => void) | null;
+    keyEventHandler: ((event: KeyboardEvent) => boolean) | null;
   }>;
   inputs: Array<{ sid: string; data: string }>;
   pastes: string[];
@@ -308,6 +309,44 @@ test('ImageAddon onData after replay is forwarded to the socket', async (t) => {
   harness.wsListeners[0]({ detail: { t: 'replay', sid: 'sid', data: '', done: true } });
   harness.terminals[0]?.onDataHandler?.('\x1b_Gi=4207;OK\x1b\\');
   assert.deepEqual(harness.inputs, [{ sid: 'sid', data: '\x1b_Gi=4207;OK\x1b\\' }]);
+});
+
+test('typing yen sends one backslash and cancels the original key input', async (t) => {
+  const harness = await mountTerminalView(t);
+  harness.wsListeners[0]({ detail: { t: 'replay', sid: 'sid', data: '', done: true } });
+  let prevented = false;
+  const event = {
+    type: 'keydown', key: '¥', shiftKey: false, ctrlKey: false, altKey: false,
+    metaKey: false, isComposing: false,
+    preventDefault: () => { prevented = true; },
+  } as KeyboardEvent;
+  const handler = harness.terminals[0].keyEventHandler!;
+  assert.equal(handler(event), false);
+  assert.equal(prevented, true);
+  handler({ ...event, type: 'keypress' });
+  handler({ ...event, type: 'keyup' });
+  assert.deepEqual(harness.inputs, [{ sid: 'sid', data: '\\' }]);
+});
+
+test('yen rewriting preserves IME, shortcuts, other keys and pasted text', async (t) => {
+  const harness = await mountTerminalView(t);
+  const handler = harness.terminals[0].keyEventHandler!;
+  const event = {
+    type: 'keydown', key: '¥', shiftKey: false, ctrlKey: false, altKey: false,
+    metaKey: false, isComposing: false, preventDefault() {},
+  } as KeyboardEvent;
+  handler(event);
+  assert.deepEqual(harness.inputs, [], 'replay must not send keyboard input');
+  harness.wsListeners[0]({ detail: { t: 'replay', sid: 'sid', data: '', done: true } });
+  for (const overrides of [
+    { isComposing: true }, { keyCode: 229 }, { ctrlKey: true }, { altKey: true },
+    { metaKey: true }, { key: '|', shiftKey: true }, { key: '\\' }, { key: '￥' },
+  ]) {
+    assert.equal(handler({ ...event, ...overrides }), true);
+  }
+  assert.deepEqual(harness.inputs, []);
+  harness.terminals[0].onDataHandler?.('\x1b[200~¥1,000\x1b[201~');
+  assert.deepEqual(harness.inputs, [{ sid: 'sid', data: '\x1b[200~¥1,000\x1b[201~' }]);
 });
 
 test('dropping images uploads them and types the escaped paths into the terminal', async (t) => {
