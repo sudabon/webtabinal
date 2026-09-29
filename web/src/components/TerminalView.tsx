@@ -27,7 +27,7 @@ import { api } from '../api';
 import { openExternalLink, shouldUseWebglRenderer } from '../util';
 import { decodeB64Bytes, TerminalSocket } from '../ws';
 import { shouldApplyTerminalFocus } from '../terminal-focus';
-import { shiftEnterSequence, shouldForwardTerminalInput } from '../terminal-input';
+import { shiftEnterSequence, shouldForwardTerminalInput, yenBackslashSequence } from '../terminal-input';
 
 type Props = {
   sessionId: string | null;
@@ -167,7 +167,8 @@ export function TerminalView({
     host.addEventListener('drop', onDrop);
 
     term.attachCustomKeyEventHandler((ev) => {
-      const rewritten = shiftEnterSequence(ev, shiftEnterNewlineRef.current);
+      const rewritten = shiftEnterSequence(ev, shiftEnterNewlineRef.current)
+        ?? yenBackslashSequence(ev);
       if (rewritten) {
         const sid = attachedRef.current;
         if (sid && shouldForwardTerminalInput(sid, replayingRef.current) && socketRef.current) {

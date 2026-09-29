@@ -19,6 +19,14 @@ export type TerminalKeyEvent = {
 // and cursor-agent accepts it as meta+return, so both read it as insert-newline.
 export const SHIFT_ENTER_SEQUENCE = '\x1b\r';
 
+export function yenBackslashSequence(ev: TerminalKeyEvent): string | null {
+  if (ev.type !== 'keydown' || ev.key !== '¥') return null;
+  if (ev.ctrlKey || ev.altKey || ev.metaKey) return null;
+  if (ev.isComposing || ev.keyCode === 229) return null;
+  // Rewrite the typed key only; pasted text and PTY output keep their yen signs.
+  return '\\';
+}
+
 export function shiftEnterSequence(ev: TerminalKeyEvent, enabled: boolean): string | null {
   if (!enabled) return null;
   // attachCustomKeyEventHandler also sees keypress/keyup; only keydown must send.

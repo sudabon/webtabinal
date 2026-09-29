@@ -18,6 +18,7 @@ export class FakeTerminal {
   rows = 24;
   options: Record<string, unknown>;
   onDataHandler: ((data: string) => void) | null = null;
+  keyEventHandler: ((event: KeyboardEvent) => boolean) | null = null;
 
   constructor(options: Record<string, unknown>) {
     this.options = options;
@@ -41,7 +42,9 @@ export class FakeTerminal {
     return { dispose() {} };
   }
 
-  attachCustomKeyEventHandler() {}
+  attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean) {
+    this.keyEventHandler = handler;
+  }
   focus() {}
   dispose() {}
   reset() {}
