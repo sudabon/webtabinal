@@ -24,6 +24,8 @@ export type SessionInfo = {
   exit: number | null;
   integrated: boolean;
   memo: string;
+  // Silences desktop banners for this tab only; absent means notifications on.
+  notifications_muted?: boolean;
   run_ms?: number;
   agent?: string;
   agent_state?: AgentState;

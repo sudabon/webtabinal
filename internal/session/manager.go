@@ -217,7 +217,8 @@ func (m *Manager) Duplicate(id string) (*Session, error) {
 		return nil, fmt.Errorf("session not found")
 	}
 	info := s.Info()
-	// Memo is intentionally not copied: duplicate is a separate session.
+	// Memo and notification mute are intentionally not copied: duplicate is a
+	// separate session.
 	return m.Create(info.Cwd)
 }
 
@@ -233,12 +234,13 @@ func (m *Manager) Restart(id string) (*Session, error) {
 	order := info.Order
 	cwd := info.Cwd
 	memo := info.Memo
+	muted := info.NotificationsMuted
 	ns, err := m.Create(cwd)
 	if err != nil {
 		return nil, err
 	}
 	// Memo was already validated when stored on the old session.
-	_ = ns.SetMemo(memo)
+	_ = ns.Patch(&memo, &muted)
 	m.dropDetector(id)
 	_ = s.Close()
 
@@ -280,11 +282,16 @@ func (m *Manager) Restart(id string) (*Session, error) {
 }
 
 func (m *Manager) SetMemo(id, memo string) (*Session, error) {
+	return m.PatchSession(id, &memo, nil)
+}
+
+// PatchSession applies the provided fields atomically and broadcasts once.
+func (m *Manager) PatchSession(id string, memo *string, notificationsMuted *bool) (*Session, error) {
 	s, ok := m.Get(id)
 	if !ok {
 		return nil, fmt.Errorf("session not found")
 	}
-	if err := s.SetMemo(memo); err != nil {
+	if err := s.Patch(memo, notificationsMuted); err != nil {
 		return nil, err
 	}
 	m.mu.RLock()

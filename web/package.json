@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test": "node --test --experimental-strip-types tests/*.test.ts"
+    "test": "node --test --test-concurrency=1 --experimental-strip-types tests/*.test.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

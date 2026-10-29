@@ -30,6 +30,11 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ memo }),
     }),
+  patchSessionNotificationsMuted: (id: string, muted: boolean) =>
+    req<SessionInfo>(`/api/sessions/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ notifications_muted: muted }),
+    }),
   reorderSessions: (ids: string[]) =>
     req<{ sessions: SessionInfo[] }>('/api/sessions/order', {
       method: 'PUT',
