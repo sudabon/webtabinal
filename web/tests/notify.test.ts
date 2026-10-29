@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   agentWaitContent,
   commandAllowsNotification,
+  sessionAllowsNotification,
   shouldRaiseDesktopNotification,
 } from '../src/notify.ts';
 
@@ -128,4 +129,14 @@ test('whitelist matching ignores case', () => {
   assert.equal(commandAllowsNotification('Task', ['task']), true);
   assert.equal(commandAllowsNotification('/usr/bin/TASK --run', ['task']), true);
   assert.equal(commandAllowsNotification('taskrunner', ['Task']), false);
+});
+
+test('a muted tab withholds banners', () => {
+  assert.equal(sessionAllowsNotification({ notifications_muted: true }), false);
+});
+
+test('an unmuted or unknown tab allows banners', () => {
+  assert.equal(sessionAllowsNotification({ notifications_muted: false }), true);
+  assert.equal(sessionAllowsNotification({}), true);
+  assert.equal(sessionAllowsNotification(undefined), true);
 });

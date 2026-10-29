@@ -45,8 +45,11 @@ type Session struct {
 	Ring       *RingBuffer
 	Integrated bool
 	Memo       string
-	Cols       uint16
-	Rows       uint16
+	// NotificationsMuted silences desktop banners for this session only; the
+	// zero value keeps notifications on.
+	NotificationsMuted bool
+	Cols               uint16
+	Rows               uint16
 	// ShellExited records that the shell announced its own termination via the
 	// private OSC exit signal. `exit` and Ctrl+D return the last command's
 	// status, so the signal — not the status — tells us the user asked to quit.
@@ -78,22 +81,23 @@ type Session struct {
 }
 
 type Info struct {
-	ID               string `json:"id"`
-	Order            int    `json:"order"`
-	Cwd              string `json:"cwd"`
-	Command          string `json:"command"`
-	State            State  `json:"state"`
-	ExitCode         *int   `json:"exit"`
-	Integrated       bool   `json:"integrated"`
-	ShellExited      bool   `json:"shell_exited"`
-	PromptSeen       bool   `json:"prompt_seen"`
-	Memo             string `json:"memo"`
-	RunMs            int64  `json:"run_ms,omitempty"`
-	Agent            string `json:"agent"`
-	AgentState       string `json:"agent_state"`
-	AgentStateSince  string `json:"agent_state_since"`
-	AgentStateSignal string `json:"agent_state_signal"`
-	AgentStateDetail string `json:"agent_state_detail,omitempty"`
+	ID                 string `json:"id"`
+	Order              int    `json:"order"`
+	Cwd                string `json:"cwd"`
+	Command            string `json:"command"`
+	State              State  `json:"state"`
+	ExitCode           *int   `json:"exit"`
+	Integrated         bool   `json:"integrated"`
+	ShellExited        bool   `json:"shell_exited"`
+	PromptSeen         bool   `json:"prompt_seen"`
+	Memo               string `json:"memo"`
+	NotificationsMuted bool   `json:"notifications_muted"`
+	RunMs              int64  `json:"run_ms,omitempty"`
+	Agent              string `json:"agent"`
+	AgentState         string `json:"agent_state"`
+	AgentStateSince    string `json:"agent_state_since"`
+	AgentStateSignal   string `json:"agent_state_signal"`
+	AgentStateDetail   string `json:"agent_state_detail,omitempty"`
 }
 
 const MaxMemoRunes = 30
@@ -110,18 +114,19 @@ func (s *Session) Info() Info {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	info := Info{
-		ID:          s.ID,
-		Order:       s.Order,
-		Cwd:         s.Cwd,
-		Command:     s.Command,
-		State:       s.State,
-		ExitCode:    s.ExitCode,
-		Integrated:  s.Integrated,
-		ShellExited: s.ShellExited,
-		PromptSeen:  s.PromptSeen,
-		Memo:        s.Memo,
-		RunMs:       s.LastRunMs,
-		AgentState:  string(agentdetect.StateNone),
+		ID:                 s.ID,
+		Order:              s.Order,
+		Cwd:                s.Cwd,
+		Command:            s.Command,
+		State:              s.State,
+		ExitCode:           s.ExitCode,
+		Integrated:         s.Integrated,
+		ShellExited:        s.ShellExited,
+		PromptSeen:         s.PromptSeen,
+		Memo:               s.Memo,
+		NotificationsMuted: s.NotificationsMuted,
+		RunMs:              s.LastRunMs,
+		AgentState:         string(agentdetect.StateNone),
 	}
 	if s.State == StateRunning && !s.RunStarted.IsZero() {
 		info.RunMs = time.Since(s.RunStarted).Milliseconds()
@@ -131,12 +136,26 @@ func (s *Session) Info() Info {
 
 // SetMemo trims and stores memo. Values longer than MaxMemoRunes Unicode code points are rejected.
 func (s *Session) SetMemo(memo string) error {
-	memo = strings.TrimSpace(memo)
-	if utf8.RuneCountInString(memo) > MaxMemoRunes {
-		return fmt.Errorf("memo exceeds %d characters", MaxMemoRunes)
+	return s.Patch(&memo, nil)
+}
+
+// Patch updates the provided fields together. The memo is validated first, so
+// a rejected memo leaves every field unchanged.
+func (s *Session) Patch(memo *string, notificationsMuted *bool) error {
+	var trimmed string
+	if memo != nil {
+		trimmed = strings.TrimSpace(*memo)
+		if utf8.RuneCountInString(trimmed) > MaxMemoRunes {
+			return fmt.Errorf("memo exceeds %d characters", MaxMemoRunes)
+		}
 	}
 	s.mu.Lock()
-	s.Memo = memo
+	if memo != nil {
+		s.Memo = trimmed
+	}
+	if notificationsMuted != nil {
+		s.NotificationsMuted = *notificationsMuted
+	}
 	s.mu.Unlock()
 	return nil
 }

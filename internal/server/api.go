@@ -56,17 +56,18 @@ func (s *Server) handleRestartSession(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handlePatchSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var body struct {
-		Memo *string `json:"memo"`
+		Memo               *string `json:"memo"`
+		NotificationsMuted *bool   `json:"notifications_muted"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if body.Memo == nil {
-		http.Error(w, "memo is required", http.StatusBadRequest)
+	if body.Memo == nil && body.NotificationsMuted == nil {
+		http.Error(w, "memo or notifications_muted is required", http.StatusBadRequest)
 		return
 	}
-	sess, err := s.hub.manager.SetMemo(id, *body.Memo)
+	sess, err := s.hub.manager.PatchSession(id, body.Memo, body.NotificationsMuted)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

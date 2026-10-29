@@ -14,11 +14,12 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { PanelLeftClose, Settings } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { SessionInfo } from '../types';
 import { cwdBasename, formatElapsed } from '../util';
 import { AgentStatePill } from './AgentStatePill';
+import { TabContextMenu } from './TabContextMenu';
 
 const MEMO_TOOLTIP_DELAY_MS = 1000;
 
@@ -36,6 +37,7 @@ type Props = {
   onDuplicate: (id: string) => void;
   onRestart: (id: string) => void;
   onClose: (id: string) => void;
+  onToggleNotifications: (id: string) => void;
   onResizeWidth: (w: number) => void;
   onResizeWidthCommit: (w: number) => void;
   onCollapse: () => void;
@@ -48,9 +50,7 @@ function SortableTab({
   memoEditorOpen,
   onSelect,
   onEditMemo,
-  onDuplicate,
-  onRestart,
-  onClose,
+  onOpenMenu,
 }: {
   session: SessionInfo;
   active: boolean;
@@ -58,9 +58,7 @@ function SortableTab({
   memoEditorOpen: boolean;
   onSelect: () => void;
   onEditMemo: () => void;
-  onDuplicate: () => void;
-  onRestart: () => void;
-  onClose: () => void;
+  onOpenMenu: (x: number, y: number) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: session.id,
@@ -154,13 +152,8 @@ function SortableTab({
       onMouseLeave={hideTooltip}
       onContextMenu={(e) => {
         e.preventDefault();
-        const action = window.prompt(
-          'Action: duplicate | restart | close',
-          session.state === 'exited' ? 'restart' : 'close',
-        );
-        if (action === 'duplicate') onDuplicate();
-        if (action === 'restart') onRestart();
-        if (action === 'close') onClose();
+        hideTooltip();
+        onOpenMenu(e.clientX, e.clientY);
       }}
       {...attributes}
       {...listeners}
@@ -191,7 +184,32 @@ function SortableTab({
   );
 }
 
+type MenuState = { sessionId: string; x: number; y: number };
+
 export function Sidebar(props: Props) {
+  // One menu for the whole sidebar, so opening another tab's menu replaces it.
+  const [menu, setMenu] = useState<MenuState | null>(null);
+  const menuReturnFocus = useRef<HTMLElement | null>(null);
+  const menuSession = menu ? props.sessions.find((s) => s.id === menu.sessionId) : undefined;
+
+  const openMenu = (sessionId: string, x: number, y: number) => {
+    // Right-clicking another tab first dismisses the open menu, leaving focus
+    // on <body>; keep the original target rather than capturing that.
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active !== document.body && !active.closest('.tab-menu')) {
+      menuReturnFocus.current = active;
+    }
+    setMenu({ sessionId, x, y });
+  };
+
+  const dismissMenu = useCallback((restoreFocus: boolean) => {
+    setMenu(null);
+    if (!restoreFocus) return;
+    const target = menuReturnFocus.current;
+    menuReturnFocus.current = null;
+    if (target?.isConnected) target.focus();
+  }, []);
+
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
   const onDragEnd = (event: DragEndEvent) => {
@@ -228,14 +246,26 @@ export function Sidebar(props: Props) {
                 memoEditorOpen={props.memoEditorOpen}
                 onSelect={() => props.onSelect(s.id)}
                 onEditMemo={() => props.onEditMemo(s.id)}
-                onDuplicate={() => props.onDuplicate(s.id)}
-                onRestart={() => props.onRestart(s.id)}
-                onClose={() => props.onClose(s.id)}
+                onOpenMenu={(x, y) => openMenu(s.id, x, y)}
               />
             ))}
           </SortableContext>
         </DndContext>
       </div>
+      {menu && menuSession && (
+        <TabContextMenu
+          key={`${menu.sessionId}:${menu.x}:${menu.y}`}
+          x={menu.x}
+          y={menu.y}
+          exited={menuSession.state === 'exited'}
+          notificationsMuted={!!menuSession.notifications_muted}
+          onDuplicate={() => props.onDuplicate(menuSession.id)}
+          onRestart={() => props.onRestart(menuSession.id)}
+          onClose={() => props.onClose(menuSession.id)}
+          onToggleNotifications={() => props.onToggleNotifications(menuSession.id)}
+          onDismiss={dismissMenu}
+        />
+      )}
       <button className="new-tab" type="button" onClick={props.onNew}>
         ＋ 新規タブ
       </button>

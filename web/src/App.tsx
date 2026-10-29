@@ -22,7 +22,12 @@ import {
   type NotificationPermissionState,
 } from './notification-provider';
 import { useColorScheme } from './theme';
-import { agentWaitContent, commandAllowsNotification, shouldRaiseDesktopNotification } from './notify';
+import {
+  agentWaitContent,
+  commandAllowsNotification,
+  sessionAllowsNotification,
+  shouldRaiseDesktopNotification,
+} from './notify';
 import { applyServerMessage } from './session-state';
 import type {
   AppConfig,
@@ -100,6 +105,21 @@ export default function App() {
     console.error(err);
     setActionError(message);
   }, []);
+
+  const toggleNotifications = useCallback((id: string) => {
+    const current = sessionsRef.current.find((s) => s.id === id);
+    if (!current) return;
+    const muted = !current.notifications_muted;
+    const setMuted = (value: boolean) => {
+      setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, notifications_muted: value } : s)));
+    };
+    // Optimistic so a banner arriving before the sessions broadcast honours it.
+    setMuted(muted);
+    void api.patchSessionNotificationsMuted(id, muted).catch((err) => {
+      setMuted(!muted);
+      reportActionError(err);
+    });
+  }, [reportActionError]);
 
   useEffect(() => {
     if (!actionError) return;
@@ -219,6 +239,7 @@ export default function App() {
       setUnread((prev) => new Set(prev).add(sid));
     }
 
+    if (!sessionAllowsNotification(info)) return;
     if (!commandAllowsNotification(info.command, cfg.notification.commands)) return;
 
     const ok = info.exit === 0 || info.exit == null;
@@ -230,7 +251,8 @@ export default function App() {
   const notifyAgentWait = useCallback((sid: string, title: string, body: string) => {
     const cfg = configRef.current;
     if (!cfg) return;
-    const command = sessionsRef.current.find((s) => s.id === sid)?.command;
+    const session = sessionsRef.current.find((s) => s.id === sid);
+    const command = session?.command;
     const content = agentWaitContent(title, body, command);
     if (!content) return;
     const active = activeRef.current === sid;
@@ -246,6 +268,7 @@ export default function App() {
       setUnread((prev) => new Set(prev).add(sid));
     }
 
+    if (!sessionAllowsNotification(session)) return;
     if (!commandAllowsNotification(command, cfg.notification.commands)) return;
 
     showNotification(sid, content.title, content.body);
@@ -648,6 +671,7 @@ export default function App() {
               .catch(reportActionError);
           }}
           onClose={(id) => void closeTab(id)}
+          onToggleNotifications={toggleNotifications}
           onResizeWidth={onResizeWidth}
           onResizeWidthCommit={(w) => void onResizeWidthCommit(w)}
           onCollapse={toggleSidebar}

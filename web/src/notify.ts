@@ -12,6 +12,14 @@ export function shouldRaiseDesktopNotification(opts: {
   return true;
 }
 
+/**
+ * Reports whether a tab still allows desktop banners. A muted tab keeps its
+ * unread mark; only the banner is withheld.
+ */
+export function sessionAllowsNotification(session: { notifications_muted?: boolean } | undefined): boolean {
+  return !session?.notifications_muted;
+}
+
 export function agentWaitContent(
   title: string,
   body: string,

@@ -812,6 +812,142 @@ test('notification.commands gates banners for both completion and agent events',
   );
 });
 
+async function loadMuteApp(
+  t: { after: (fn: () => unknown) => void },
+  patchMuted: (id: string, muted: boolean) => Promise<unknown>,
+) {
+  const originalConsoleError = console.error;
+  console.error = () => {};
+  t.after(() => {
+    console.error = originalConsoleError;
+  });
+  const hooks = new HookHarness();
+  const cfg = appConfig('system');
+  cfg.notification.enabled = true;
+  cfg.notification.always = true;
+  const api = {
+    getConfig: async () => cfg,
+    patchConfig: async (patch: Partial<AppConfig>) => ({ ...cfg, ...patch }),
+    patchSessionNotificationsMuted: patchMuted,
+  };
+  const server = await createServer({
+    configFile: false,
+    logLevel: 'silent',
+    plugins: [mockModules(hooks, api, true), react()],
+    resolve: {
+      alias: [
+        { find: /^react$/, replacement: fileURLToPath(new URL('./app-react-mock.ts', import.meta.url)) },
+        { find: /^react\/jsx-dev-runtime$/, replacement: fileURLToPath(new URL('./app-react-mock.ts', import.meta.url)) },
+        { find: /^react\/jsx-runtime$/, replacement: fileURLToPath(new URL('./app-react-mock.ts', import.meta.url)) },
+      ],
+    },
+    server: { middlewareMode: true },
+  });
+  t.after(async () => {
+    await server.close();
+  });
+
+  Object.assign(globalThis, {
+    document: { hasFocus: () => true, title: '', activeElement: null },
+    window: {
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => true,
+      setTimeout,
+      clearTimeout,
+      close: () => {},
+      focus: () => {},
+    },
+  });
+
+  const { default: App } = await server.ssrLoadModule('/src/App.tsx') as {
+    default: () => { props: { children: Array<{ props?: Record<string, unknown> } | false | null> } };
+  };
+  const render = () => {
+    hooks.beginRender();
+    const tree = App();
+    const children = (tree.props.children as Array<{ props?: Record<string, unknown> } | false | null>)
+      .filter((child): child is { props: Record<string, unknown> } => !!child && typeof child === 'object' && !!child.props);
+    const sidebar = children.find((child) => 'sessions' in child.props)!;
+    const toast = children.find((child) => child.props.className === 'toast-error');
+    return {
+      sessions: sidebar.props.sessions as Array<{ id: string; notifications_muted?: boolean }>,
+      unread: sidebar.props.unread as Set<string>,
+      toggle: sidebar.props.onToggleNotifications as (id: string) => void,
+      toast: toast?.props as { children?: unknown } | undefined,
+    };
+  };
+
+  render();
+  for (const effect of hooks.effects) effect();
+  await new Promise(setImmediate);
+  render();
+  return render;
+}
+
+function complete(sid: string, cmd: string) {
+  const { socketOptions } = harness();
+  socketOptions.onMessage({
+    t: 'state', sid, cwd: '/tmp', cmd, state: 'running', exit: null, integrated: true, run_ms: 0,
+  });
+  socketOptions.onMessage({
+    t: 'state', sid, cwd: '/tmp', cmd, state: 'idle', exit: 0, integrated: true, run_ms: 5,
+  });
+}
+
+test('a muted tab raises no banner but stays unread while other tabs notify', async (t) => {
+  const patches: Array<[string, boolean]> = [];
+  const render = await loadMuteApp(t, async (id, muted) => {
+    patches.push([id, muted]);
+    return {};
+  });
+
+  render().toggle('b');
+  let view = render();
+  assert.deepEqual(patches, [['b', true]]);
+  assert.equal(view.sessions.find((s) => s.id === 'b')?.notifications_muted, true);
+  assert.equal(view.sessions.find((s) => s.id === 'c')?.notifications_muted, undefined);
+
+  complete('b', 'claude');
+  await new Promise(setImmediate);
+  view = render();
+  assert.equal(view.unread.has('b'), true, 'a muted completion must still mark the tab unread');
+  assert.deepEqual(harness().shown, [], 'a muted tab must not raise a completion banner');
+
+  harness().socketOptions.onMessage({ t: 'notify', sid: 'b', title: 'Claude Code', body: 'Ready' });
+  await new Promise(setImmediate);
+  assert.deepEqual(harness().shown, [], 'a muted tab must not raise an agent banner');
+
+  complete('c', 'claude');
+  await new Promise(setImmediate);
+  assert.deepEqual(harness().shown.map((r) => r.sid), ['c'], 'other tabs keep notifying');
+
+  // Unmuting does not replay; the next event notifies normally.
+  render().toggle('b');
+  render();
+  assert.deepEqual(patches, [['b', true], ['b', false]]);
+  assert.deepEqual(harness().shown.map((r) => r.sid), ['c']);
+  complete('b', 'claude');
+  await new Promise(setImmediate);
+  assert.deepEqual(harness().shown.map((r) => r.sid), ['c', 'b']);
+});
+
+test('a failed mute patch rolls back and shows the action-error toast', async (t) => {
+  const render = await loadMuteApp(t, async () => {
+    throw new Error('session not found');
+  });
+
+  render().toggle('a');
+  assert.equal(render().sessions.find((s) => s.id === 'a')?.notifications_muted, true);
+  await new Promise(setImmediate);
+  const view = render();
+  assert.equal(view.sessions.find((s) => s.id === 'a')?.notifications_muted, false);
+  assert.equal(
+    Array.isArray(view.toast?.children) ? view.toast.children[0] : view.toast?.children,
+    'session not found',
+  );
+});
+
 test('agent_state frames update pills without replacing shell state or dropping unread', async (t) => {
   const hooks = new HookHarness();
   const cfg = appConfig('system');

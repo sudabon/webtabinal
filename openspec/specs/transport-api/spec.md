@@ -64,7 +64,7 @@ Session list, create, duplicate, restart, and WebSocket `sessions` payloads SHAL
 
 ### Requirement: Patch session memo
 
-The daemon SHALL accept `PATCH /api/sessions/{id}` with JSON `{ "memo": "<string>" }`. The value SHALL be trimmed; more than 30 Unicode code points SHALL be rejected with 400. A successful patch SHALL persist the memo on the session, return the updated session, and broadcast the session list on the WebSocket.
+The daemon SHALL accept `PATCH /api/sessions/{id}` with a JSON object containing `memo` (string), `notifications_muted` (boolean), or both. At least one of the two fields SHALL be present; a body with neither SHALL be rejected with 400. A `memo` value SHALL be trimmed; more than 30 Unicode code points SHALL be rejected with 400. A field of the wrong JSON type SHALL be rejected with 400. A rejected request SHALL leave both the memo and the muted flag unchanged. A successful patch SHALL persist the provided fields on the session, leave omitted fields unchanged, return the updated session, and broadcast the session list on the WebSocket.
 
 #### Scenario: Successful memo patch
 
@@ -80,6 +80,21 @@ The daemon SHALL accept `PATCH /api/sessions/{id}` with JSON `{ "memo": "<string
 
 - **WHEN** the client `PATCH /api/sessions/{id}` for an unknown id
 - **THEN** the daemon responds with a client error and no session is created
+
+#### Scenario: Mute patch leaves memo untouched
+
+- **WHEN** a session has memo `CI watch` and the client `PATCH /api/sessions/{id}` with `{ "notifications_muted": true }`
+- **THEN** the response session has `"notifications_muted": true` and `"memo": "CI watch"`, and the WebSocket `sessions` payload matches
+
+#### Scenario: Invalid memo does not apply mute
+
+- **WHEN** the client `PATCH /api/sessions/{id}` with `{ "memo": "<31 code points>", "notifications_muted": true }`
+- **THEN** the daemon responds 400 and the session is still not muted
+
+#### Scenario: Empty patch is rejected
+
+- **WHEN** the client `PATCH /api/sessions/{id}` with `{}`
+- **THEN** the daemon responds 400
 
 ### Requirement: Ephemeral notify WebSocket message
 
@@ -275,3 +290,17 @@ Images stored by the upload endpoint SHALL live under the application support di
 
 - **WHEN** a file the daemon did not generate sits in the images directory and a prune runs
 - **THEN** that file is still present
+
+### Requirement: Session notification mute in API payloads
+
+Session list, create, duplicate, restart, and WebSocket `sessions` payloads SHALL include `notifications_muted` (boolean, `false` unless the session was muted).
+
+#### Scenario: New session is not muted
+
+- **WHEN** the client `POST /api/sessions`
+- **THEN** the returned session object includes `"notifications_muted": false`
+
+#### Scenario: List reflects a muted session
+
+- **WHEN** a session was muted through the PATCH endpoint and the client `GET /api/sessions`
+- **THEN** that session object includes `"notifications_muted": true`
