@@ -88,10 +88,40 @@ func (d *Detector) blockedEvidence(man *CompiledManifest) (bool, string) {
 	if !d.hasScreen || !d.lastSnap.Available {
 		return false, ""
 	}
-	if hit, ok := matchPatterns(d.lastSnap.Lines, man.Blocked); ok {
-		return true, detailOf(hit)
+	hit, ok := matchPatterns(d.lastSnap.Lines, man.Blocked)
+	if !ok {
+		return false, ""
 	}
-	return false, ""
+	if blockedSuppressed(d.lastSnap.Lines, man) {
+		return false, ""
+	}
+	return true, detailOf(hit)
+}
+
+// blockedSuppressed reports whether a suppression pattern matches a line below
+// the lowest blocked hit. Position matters: a stale status line above a live
+// approval prompt must not hide it.
+func blockedSuppressed(lines []string, man *CompiledManifest) bool {
+	if len(man.BlockedSuppress) == 0 {
+		return false
+	}
+	lowest := -1
+	for i, line := range lines {
+		for _, p := range man.Blocked {
+			if p.RE.MatchString(line) {
+				lowest = i
+				break
+			}
+		}
+	}
+	for _, p := range man.BlockedSuppress {
+		for i := len(lines) - 1; i > lowest; i-- {
+			if p.RE.MatchString(lines[i]) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (d *Detector) workingEvidence(man *CompiledManifest, now time.Time) (bool, Signal, string) {

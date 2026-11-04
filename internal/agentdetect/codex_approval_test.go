@@ -135,3 +135,55 @@ func TestCodexApprovalPatternsIgnoreNonApprovalScreens(t *testing.T) {
 		}
 	}
 }
+
+// The Codex status line ("Working (19m 17s • esc to interrupt)") is only shown
+// while no approval modal is open. Approval-like prose or numbered Yes/No lists
+// left in the transcript above it must not report blocked.
+func TestCodexWorkingStatusLineSuppressesStaleBlockedText(t *testing.T) {
+	for name, lines := range map[string][]string{
+		"approval-like prose": {
+			"• Do you want to keep the legacy handler? I'll assume yes for now.",
+			"",
+			"• Working (19m 17s • esc to interrupt)",
+			"",
+			"›",
+		},
+		"numbered yes/no list in transcript": {
+			"  1. Yes, migrate the handler",
+			"  2. No, keep both",
+			"",
+			"◦ Working (3m 02s • esc to interrupt)",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t, nil)
+			identifyCodex(h)
+			h.screen.set(lines...)
+			h.engine.OnOutput(h.id, 40)
+			flushDebounce(h)
+			s := mustSnap(t, h.engine, h.id)
+			if s.State != StateWorking {
+				t.Fatalf("state = %s (%s), want working", s.State, s.Detail)
+			}
+		})
+	}
+}
+
+// A stale status line above a live approval modal must not hide the approval.
+func TestCodexStaleStatusLineAboveApprovalStillBlocks(t *testing.T) {
+	h := newHarness(t, nil)
+	identifyCodex(h)
+	h.screen.set(
+		"• Working (0m 12s • esc to interrupt)",
+		"Would you like to run the following command?",
+		"$ go test ./...",
+		"› 1. Yes, proceed (y)",
+		"  3. No, and tell Codex what to do differently (esc)",
+	)
+	h.engine.OnOutput(h.id, 40)
+	flushDebounce(h)
+	s := mustSnap(t, h.engine, h.id)
+	if s.State != StateBlocked {
+		t.Fatalf("state = %s, want blocked", s.State)
+	}
+}

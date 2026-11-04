@@ -9,15 +9,19 @@ import (
 
 // CompiledManifest is the immutable, load-time-validated form of a schema v1 manifest.
 type CompiledManifest struct {
-	ID               string
-	DisplayName      string
-	SchemaVersion    int
-	Executables      []string
-	CommandMatchers  []*regexp.Regexp
-	ScreenBuffer     vtscreen.BufferKind
-	BottomLines      int
-	HasBottomLines   bool
-	Blocked          []CompiledPattern
+	ID              string
+	DisplayName     string
+	SchemaVersion   int
+	Executables     []string
+	CommandMatchers []*regexp.Regexp
+	ScreenBuffer    vtscreen.BufferKind
+	BottomLines     int
+	HasBottomLines  bool
+	Blocked         []CompiledPattern
+	// BlockedSuppress patterns veto blocked evidence when they match a line below
+	// every blocked hit, e.g. a live "esc to interrupt" status line under stale
+	// approval-like prose that is still in the bottom lines.
+	BlockedSuppress  []CompiledPattern
 	Working          []CompiledPattern
 	Idle             []CompiledPattern
 	BlockedAuth      []Authority

@@ -38,9 +38,10 @@ type rawScreen struct {
 }
 
 type rawStates struct {
-	Blocked patternList `json:"blocked"`
-	Working patternList `json:"working"`
-	Idle    patternList `json:"idle"`
+	Blocked             patternList `json:"blocked"`
+	BlockedSuppressedBy patternList `json:"blocked_suppressed_by"`
+	Working             patternList `json:"working"`
+	Idle                patternList `json:"idle"`
 }
 
 type rawAuthority struct {
@@ -185,6 +186,10 @@ func compileManifest(file string, raw rawManifest) (*CompiledManifest, error) {
 	if err != nil {
 		return nil, &LoadError{File: file, Field: "screen.states.blocked", Err: err}
 	}
+	blockedSuppress, err := compilePatterns("screen.states.blocked_suppressed_by", raw.Screen.States.BlockedSuppressedBy)
+	if err != nil {
+		return nil, &LoadError{File: file, Field: "screen.states.blocked_suppressed_by", Err: err}
+	}
 	working, err := compilePatterns("screen.states.working", raw.Screen.States.Working)
 	if err != nil {
 		return nil, &LoadError{File: file, Field: "screen.states.working", Err: err}
@@ -226,6 +231,7 @@ func compileManifest(file string, raw rawManifest) (*CompiledManifest, error) {
 		BottomLines:      bottom,
 		HasBottomLines:   raw.Screen.BottomLines != nil,
 		Blocked:          blocked,
+		BlockedSuppress:  blockedSuppress,
 		Working:          working,
 		Idle:             idle,
 		BlockedAuth:      blockedAuth,
