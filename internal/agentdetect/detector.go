@@ -34,6 +34,7 @@ type Detector struct {
 	lastOutput      time.Time
 	pendingOSC      OSCKind
 	cancelDebounce  func()
+	debounceSince   time.Time
 	cancelQuiet     func()
 	lastSnap        vtscreen.Snapshot
 	hasScreen       bool
@@ -348,10 +349,24 @@ func (d *Detector) applyForegroundLocked(info ForegroundInfo, promptReturned boo
 	d.provisional = id != "" && sig != SignalProcess
 }
 
+// rescheduleLocked debounces screen evaluation. Agents such as Codex redraw
+// their status line faster than the debounce interval, so the trailing edge is
+// capped at debounceMaxWait after the first deferred request; otherwise the
+// detector would keep judging a stale snapshot for as long as output flows.
 func (d *Detector) rescheduleLocked(delay time.Duration, gen uint64) {
 	if d.cancelDebounce != nil {
 		d.cancelDebounce()
 		d.cancelDebounce = nil
+	}
+	now := d.engine.clock.Now()
+	if d.debounceSince.IsZero() {
+		d.debounceSince = now
+	}
+	if deadline := d.debounceSince.Add(debounceMaxWait(d.engine.debounce)); now.Add(delay).After(deadline) {
+		delay = deadline.Sub(now)
+		if delay < 0 {
+			delay = 0
+		}
 	}
 	d.cancelDebounce = d.engine.scheduler.AfterFunc(delay, func() {
 		d.evaluateScreen(gen)
@@ -405,6 +420,7 @@ func (d *Detector) evaluateScreen(gen uint64) {
 	}
 	d.lastSnap = snap
 	d.hasScreen = true
+	d.debounceSince = time.Time{}
 	now := d.engine.clock.Now()
 	changed, out := d.recomputeLocked(now)
 	d.finish(changed, out, gen)
@@ -436,6 +452,10 @@ func (d *Detector) snapshotOptsLocked(man *CompiledManifest) vtscreen.SnapshotOp
 		opts.Lines = d.engine.bottomLines
 	}
 	return opts
+}
+
+func debounceMaxWait(debounce time.Duration) time.Duration {
+	return debounceMaxWaitFactor * debounce
 }
 
 func (d *Detector) trimSamplesLocked(now time.Time) {

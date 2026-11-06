@@ -22,6 +22,10 @@ const (
 	DefaultActivityMinBytes = 32
 )
 
+// debounceMaxWaitFactor bounds how long continuous output can postpone a
+// screen evaluation, as a multiple of the debounce interval.
+const debounceMaxWaitFactor = 4
+
 // State is the agent turn state, independent of shell command state.
 type State string
 

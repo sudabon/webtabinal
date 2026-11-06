@@ -2,6 +2,7 @@ package agentdetect
 
 import (
 	"testing"
+	"time"
 )
 
 func codexBlockedPatternIDs(t *testing.T, lines ...string) []string {
@@ -185,5 +186,40 @@ func TestCodexStaleStatusLineAboveApprovalStillBlocks(t *testing.T) {
 	s := mustSnap(t, h.engine, h.id)
 	if s.State != StateBlocked {
 		t.Fatalf("state = %s, want blocked", s.State)
+	}
+}
+
+// Codex redraws its status line (shimmer, elapsed timer) faster than the
+// debounce interval. A trailing-edge-only debounce would never fire, freezing
+// the detector on the approval screen it last captured.
+func TestContinuousOutputStillRefreshesScreen(t *testing.T) {
+	h := newHarness(t, nil)
+	identifyCodex(h)
+	h.screen.set(
+		"Would you like to run the following command?",
+		"$ go test ./...",
+		"› 1. Yes, proceed (y)",
+		"  3. No, and tell Codex what to do differently (esc)",
+	)
+	h.engine.OnOutput(h.id, 40)
+	flushDebounce(h)
+	if s := mustSnap(t, h.engine, h.id); s.State != StateBlocked {
+		t.Fatalf("precondition: state = %s, want blocked", s.State)
+	}
+
+	h.screen.set(
+		"• Ran go test ./...",
+		"",
+		"◦ Working (0m 03s • esc to interrupt)",
+		"",
+		"› Ask Codex to do anything",
+	)
+	step := DefaultDebounce / 3
+	for elapsed := time.Duration(0); elapsed < 3*time.Second; elapsed += step {
+		h.engine.OnOutput(h.id, 64)
+		h.clock.Advance(step)
+	}
+	if s := mustSnap(t, h.engine, h.id); s.State != StateWorking {
+		t.Fatalf("state = %s (%s), want working after the approval closed", s.State, s.Detail)
 	}
 }
